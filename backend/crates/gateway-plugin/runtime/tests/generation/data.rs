@@ -645,6 +645,8 @@ async fn proxy_http_resolves_each_send_and_directory_only_exposes_selection_fact
                 id: "proxy_login".into(),
                 name: "Login".into(),
                 enabled: false,
+                managed: false,
+                available: true,
                 proxy: OutboundProxy::parse("http://user:secret@private.example:8080").unwrap(),
                 revision: Revision::new(2).unwrap(),
                 auto_location: false,
