@@ -1,0 +1,54 @@
+{
+  "mihomo": {
+    "page": {
+      "description": "Manage Mihomo subscriptions and fixed node egress",
+      "subscriptions": "Subscriptions",
+      "nodes": "Nodes",
+      "emptySubscriptions": "No Mihomo subscriptions",
+      "emptyNodes": "No nodes in this subscription",
+      "searchNodes": "Search nodes",
+      "searchPlaceholder": "Search by node name",
+      "noNodeMatches": "No matching nodes",
+      "available": "Available",
+      "unavailable": "Unavailable",
+      "notSelected": "Select a subscription to view its nodes",
+      "viewAccounts": "View {count} accounts bound to {name}"
+    },
+    "columns": {
+      "subscriptionName": "Subscription",
+      "nodeCount": "Nodes",
+      "subscriptionUrl": "URL",
+      "nodeName": "Node",
+      "type": "Type",
+      "endpoint": "Egress",
+      "availability": "Status",
+      "accounts": "Bound accounts",
+      "updatedAt": "Updated"
+    },
+    "actions": {
+      "create": "Add subscription",
+      "viewNodes": "View nodes",
+      "refresh": "Refresh subscription",
+      "edit": "Edit subscription",
+      "delete": "Delete subscription",
+      "confirmDelete": "Delete subscription",
+      "deleteDescription": "Remove account and plugin references before deleting {name}",
+      "saved": "Subscription saved",
+      "refreshed": "Subscription refreshed",
+      "deleted": "Subscription deleted"
+    },
+    "editor": {
+      "createTitle": "Add Mihomo subscription",
+      "editTitle": "Edit Mihomo subscription",
+      "name": "Subscription name",
+      "namePlaceholder": "Enter a subscription name",
+      "url": "Subscription URL",
+      "urlPlaceholder": "Paste a Mihomo subscription URL",
+      "urlOptionalPlaceholder": "Leave blank to keep the current URL",
+      "urlHelp": "Saved subscription URLs are not returned",
+      "nameRequired": "Enter a subscription name",
+      "urlRequired": "Enter a subscription URL",
+      "save": "Save subscription"
+    }
+  }
+}

@@ -4,6 +4,7 @@ pub mod client_distribution;
 mod command_line;
 pub mod config;
 mod logging;
+pub mod mihomo;
 pub mod official_plugins;
 pub mod outbound;
 pub mod peer;

@@ -18,12 +18,14 @@ const options = computed(() => [
     value: '',
   },
   ...proxies.value.map(proxy => ({
-    label: `${proxy.name}${proxy.enabled
-      ? ''
-      : t('plugins.sourceProxy.disabledSuffix')}`,
+    label: `${proxy.name}${!proxy.enabled
+      ? t('plugins.sourceProxy.disabledSuffix')
+      : !proxy.available
+          ? t('plugins.sourceProxy.unavailableSuffix')
+          : ''}`,
     value: proxy.id,
     description: proxy.endpoint,
-    disabled: !proxy.enabled,
+    disabled: !proxy.enabled || !proxy.available,
   })),
   // 目录加载失败或代理已被删除时保留已选 ID，不能静默切换到部署默认出口。
   ...(proxyId.value && !proxies.value.some(proxy => proxy.id === proxyId.value)

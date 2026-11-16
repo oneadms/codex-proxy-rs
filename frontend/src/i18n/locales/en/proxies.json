@@ -172,6 +172,7 @@
       "alreadyAssigned": "Already using this proxy",
       "selectionLimit": "Assign up to {count} accounts at a time",
       "enableFirst": "Enable this proxy before assigning accounts",
+      "availableFirst": "This proxy is currently unavailable",
       "assignAction": "Assign ({count})",
       "assigned": "Assigned {count} account to “{name}” | Assigned {count} accounts to “{name}”"
     }

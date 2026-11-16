@@ -68,5 +68,12 @@ test = false
 bench = false
 doc = false
 
+[[bin]]
+name = "gateway-host-mihomo-worker"
+path = "tests/support/mihomo_worker.rs"
+test = false
+bench = false
+doc = false
+
 [lints]
 workspace = true

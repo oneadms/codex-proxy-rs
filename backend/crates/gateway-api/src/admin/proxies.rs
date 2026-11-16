@@ -154,6 +154,8 @@ struct ProxyAccountView {
 struct ProxyView {
     max_websocket_connections: u32,
     enabled: bool,
+    managed: bool,
+    available: bool,
     auto_location: bool,
     detected_location: Option<gateway_admin::model::proxies::DetectedProxyLocation>,
     location: Option<gateway_core::account::RequestLocation>,
@@ -179,6 +181,8 @@ impl From<(ProxyRecord, crate::time::TimePresenter)> for ProxyView {
             auto_location: record.auto_location,
             max_websocket_connections: record.proxy.max_websocket_connections(),
             enabled: record.enabled,
+            managed: record.managed,
+            available: record.available,
             detected_location: record.detected_location,
             location: record.location,
             id: record.id,

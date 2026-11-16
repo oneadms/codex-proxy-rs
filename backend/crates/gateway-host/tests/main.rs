@@ -4,6 +4,7 @@ mod client_distribution;
 mod command_line;
 mod config;
 mod logging;
+mod mihomo;
 mod official_plugins;
 mod outbound;
 mod plugin_distribution;

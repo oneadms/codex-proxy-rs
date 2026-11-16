@@ -226,6 +226,8 @@ impl ProxyStore for MemoryProxies {
         }
         let mut record = ProxyRecord {
             enabled: true,
+            managed: false,
+            available: true,
             auto_location: command.auto_location,
             detected_location: None,
             location: command.location,
@@ -423,6 +425,8 @@ async fn proxy_routes_save_reload_test_rename_and_delete_without_exposing_creden
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(created["data"][0]["data"]["record"]["name"], "Office");
+    assert_eq!(created["data"][0]["data"]["record"]["managed"], false);
+    assert_eq!(created["data"][0]["data"]["record"]["available"], true);
     assert_eq!(
         created["data"][0]["data"]["record"]["hasAuthentication"],
         true

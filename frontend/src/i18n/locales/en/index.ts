@@ -5,6 +5,7 @@ import common from './common.json'
 import dashboard from './dashboard.json'
 import groups from './groups.json'
 import keys from './keys.json'
+import mihomo from './mihomo.json'
 import navigation from './navigation.json'
 import plugins from './plugins.json'
 import proxies from './proxies.json'
@@ -22,6 +23,7 @@ export default {
   ...dashboard,
   ...groups,
   ...keys,
+  ...mihomo,
   ...navigation,
   ...plugins,
   ...proxies,

@@ -69,7 +69,7 @@ impl PluginProxyPortSlot {
                 .map(|proxy| wire::ProxySummary {
                     id: proxy.id,
                     name: proxy.name,
-                    enabled: proxy.enabled,
+                    enabled: proxy.enabled && proxy.available,
                 })
                 .collect(),
             total: page.total,

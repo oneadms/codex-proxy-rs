@@ -41,16 +41,18 @@ const options = computed(() => [
   ...proxies.value.map(proxy => ({
     label: `${proxy.name.trim() || proxy.endpoint}${!proxy.enabled
       ? t('accounts.proxy.disabledSuffix')
-      : proxy.lastTest?.success
-        ? ''
-        : proxy.lastTest
-          ? t('accounts.proxy.testFailed')
-          : t('accounts.proxy.notTested')}`,
+      : !proxy.available
+          ? t('accounts.proxy.unavailableSuffix')
+          : proxy.lastTest?.success
+            ? ''
+            : proxy.lastTest
+              ? t('accounts.proxy.testFailed')
+              : t('accounts.proxy.notTested')}`,
     value: proxy.id,
     description: proxy.name.trim()
       ? proxy.endpoint
       : undefined,
-    disabled: !proxy.enabled,
+    disabled: !proxy.enabled || !proxy.available,
   })),
 ])
 const selection = computed({
@@ -80,6 +82,8 @@ const testTarget = computed(() => {
   // 禁用代理的账号使用部署默认出口，不把该代理自身的测试结果当成账号出口
   if (selection.value === 'deployment' || selectedProxy.value?.enabled === false)
     return 'deployment' as const
+  if (selectedProxy.value?.available === false)
+    return null
   return selectedProxy.value ?? null
 })
 const { result, defaultResult, testing, test } = useAccountProxyTest({
@@ -96,18 +100,24 @@ const { result, defaultResult, testing, test } = useAccountProxyTest({
 const optionTests = computed<Record<string, OutboundProxyTest | null>>(() => ({
   ...Object.fromEntries(proxies.value.map(proxy => [
     proxy.id,
-    proxy.enabled ? proxy.lastTest : null,
+    proxy.enabled && proxy.available
+      ? proxy.lastTest
+      : null,
   ])),
   deployment: defaultResult.value,
 }))
 const selectedTest = computed(() => result.value ?? (testTarget.value === 'deployment'
   ? defaultResult.value
   : optionTests.value[selection.value]))
-const testHint = computed(() => selectedProxy.value?.enabled === false
-  ? t('accounts.proxy.disabledUsesDefault')
-  : selection.value !== 'deployment' && !selectedProxy.value
-    ? t('accounts.proxy.selectToTest')
-    : null)
+const testHint = computed(() => {
+  if (selectedProxy.value?.enabled === false)
+    return t('accounts.proxy.disabledUsesDefault')
+  if (selectedProxy.value?.available === false)
+    return t('accounts.proxy.unavailable')
+  if (selection.value !== 'deployment' && !selectedProxy.value)
+    return t('accounts.proxy.selectToTest')
+  return null
+})
 </script>
 
 <template>

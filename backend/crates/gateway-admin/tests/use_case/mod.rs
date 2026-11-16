@@ -9,6 +9,7 @@ mod client_keys;
 mod credentials;
 mod freeze_recovery;
 mod import_tasks;
+mod mihomo;
 mod observability;
 mod peer_link;
 mod plugins;
@@ -66,6 +67,7 @@ use gateway_admin::{
     ports::{
         backup::BackupStorePorts,
         client_distribution::ClientDistributionResolver,
+        mihomo::{MihomoRuntime, MihomoStore, MihomoSubscriptionFetcher},
         provider::{ProviderAdmin, ProviderAdminError, ProviderAdminErrorKind},
         store::{
             AccountGroupStore, AccountRuntimeStore, AccountStore, AdminAccountStorePorts,
@@ -105,6 +107,9 @@ pub(super) struct AdminHarness {
     client_keys: Arc<dyn ClientKeyStore>,
     observability: Arc<dyn ObservabilityStore>,
     settings: Arc<dyn SettingsStore>,
+    mihomo_store: Arc<dyn MihomoStore>,
+    mihomo_runtime: Arc<dyn MihomoRuntime>,
+    mihomo_fetcher: Arc<dyn MihomoSubscriptionFetcher>,
     backup: BackupStorePorts,
     providers: Vec<Arc<dyn ProviderAdmin>>,
     probe: Arc<dyn AccountProbe>,
@@ -119,6 +124,7 @@ pub(super) struct AdminHarness {
 impl AdminHarness {
     pub(super) fn new() -> Self {
         let unavailable = Arc::new(UnavailableStore);
+        let mihomo_runtime = Arc::new(UnavailableMihomoRuntime);
         Self {
             default_password: "strong-test-password".to_owned(),
             session_ttl_minutes: 60,
@@ -133,6 +139,9 @@ impl AdminHarness {
             client_keys: unavailable.clone(),
             observability: unavailable.clone(),
             settings: unavailable,
+            mihomo_store: Arc::new(UnavailableMihomoStore),
+            mihomo_runtime: mihomo_runtime.clone(),
+            mihomo_fetcher: mihomo_runtime,
             backup: BackupStorePorts::disabled(),
             providers: vec![
                 Arc::new(UnavailableProvider::new("openai")),
@@ -216,6 +225,18 @@ impl AdminHarness {
         self
     }
 
+    pub(super) fn mihomo(
+        mut self,
+        store: Arc<dyn MihomoStore>,
+        runtime: Arc<dyn MihomoRuntime>,
+        fetcher: Arc<dyn MihomoSubscriptionFetcher>,
+    ) -> Self {
+        self.mihomo_store = store;
+        self.mihomo_runtime = runtime;
+        self.mihomo_fetcher = fetcher;
+        self
+    }
+
     pub(super) fn service_middleware(
         mut self,
         source: gateway_admin::public_service::PlanSource,
@@ -285,6 +306,7 @@ impl AdminHarness {
                     self.account_runtime,
                     self.account_groups,
                     self.proxies,
+                    self.mihomo_store,
                 ),
                 self.auth,
                 self.client_keys,
@@ -316,6 +338,8 @@ impl AdminHarness {
                 client_distribution: Arc::new(NoopClientDistribution),
                 system: self.system,
                 client_key_verifier: self.client_key_verifier,
+                mihomo_runtime: self.mihomo_runtime,
+                mihomo_subscription_fetcher: self.mihomo_fetcher,
             },
         )
         .await
@@ -428,6 +452,111 @@ impl AuthStore for BootstrapAuthStore {
 }
 
 struct UnavailableStore;
+
+struct UnavailableMihomoStore;
+
+struct UnavailableMihomoRuntime;
+
+#[async_trait]
+impl MihomoRuntime for UnavailableMihomoRuntime {
+    async fn validate(
+        &self,
+        _: &[gateway_admin::model::mihomo::MihomoNodeConfig],
+    ) -> Result<(), gateway_admin::model::AdminError> {
+        Ok(())
+    }
+
+    async fn apply(
+        &self,
+        _: Vec<gateway_admin::model::mihomo::MihomoRuntimeNode>,
+    ) -> Result<(), gateway_admin::model::AdminError> {
+        Ok(())
+    }
+
+    async fn shutdown(&self) {}
+}
+
+#[async_trait]
+impl MihomoSubscriptionFetcher for UnavailableMihomoRuntime {
+    async fn fetch(
+        &self,
+        _: &str,
+    ) -> Result<Vec<gateway_admin::model::mihomo::MihomoNodeConfig>, gateway_admin::model::AdminError>
+    {
+        Err(gateway_admin::model::AdminError::unavailable(
+            "unused mihomo subscription fetcher",
+        ))
+    }
+}
+
+#[async_trait]
+impl MihomoStore for UnavailableMihomoStore {
+    async fn subscriptions(
+        &self,
+    ) -> AdminStoreResult<Vec<gateway_admin::model::mihomo::MihomoSubscription>> {
+        Err(unavailable("mihomo subscriptions"))
+    }
+
+    async fn subscription(
+        &self,
+        _: &str,
+    ) -> AdminStoreResult<gateway_admin::model::mihomo::MihomoSubscription> {
+        Err(unavailable("mihomo subscription"))
+    }
+
+    async fn create(
+        &self,
+        _: gateway_admin::model::mihomo::NewMihomoSubscription,
+        _: Vec<gateway_admin::model::mihomo::MihomoNodeConfig>,
+        _: &MutationContext,
+    ) -> AdminStoreResult<gateway_admin::model::mihomo::MihomoRefreshResult> {
+        Err(unavailable("mihomo create"))
+    }
+
+    async fn update(
+        &self,
+        _: gateway_admin::model::mihomo::UpdateMihomoSubscription,
+        _: Option<Vec<gateway_admin::model::mihomo::MihomoNodeConfig>>,
+        _: &MutationContext,
+    ) -> AdminStoreResult<gateway_admin::model::mihomo::MihomoRefreshResult> {
+        Err(unavailable("mihomo update"))
+    }
+
+    async fn sync_nodes(
+        &self,
+        _: &str,
+        _: Revision,
+        _: Vec<gateway_admin::model::mihomo::MihomoNodeConfig>,
+        _: &MutationContext,
+    ) -> AdminStoreResult<gateway_admin::model::mihomo::MihomoRefreshResult> {
+        Err(unavailable("mihomo sync"))
+    }
+
+    async fn delete(
+        &self,
+        _: &str,
+        _: Revision,
+        _: &MutationContext,
+    ) -> AdminStoreResult<Revision> {
+        Err(unavailable("mihomo delete"))
+    }
+
+    async fn nodes(
+        &self,
+        _: gateway_admin::model::mihomo::MihomoNodeQuery,
+    ) -> AdminStoreResult<gateway_admin::model::mihomo::MihomoNodePage> {
+        Err(unavailable("mihomo nodes"))
+    }
+
+    async fn runtime_snapshot(
+        &self,
+    ) -> AdminStoreResult<gateway_admin::model::mihomo::MihomoRuntimeSnapshot> {
+        Ok(gateway_admin::model::mihomo::MihomoRuntimeSnapshot {
+            config_revision: Revision::new(1).expect("valid revision"),
+            nodes: Vec::new(),
+        })
+    }
+}
 
 struct UnavailableClientKeyVerifier;
 

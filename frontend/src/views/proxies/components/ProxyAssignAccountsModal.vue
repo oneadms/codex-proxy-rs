@@ -9,7 +9,7 @@ import AccountGroupMarks from '@/components/AccountGroupMarks.vue'
 import ProviderIconGroup from '@/components/ProviderIconGroup.vue'
 import { useProxyAccountAssignment } from '../composables/useProxyAccountAssignment'
 
-const props = defineProps<{ proxy: OutboundProxyRecord | null }>()
+const props = defineProps<{ proxy: Pick<OutboundProxyRecord, 'id' | 'name' | 'enabled' | 'available' | 'accountCount'> | null }>()
 const emit = defineEmits<{ assigned: [] }>()
 const open = defineModel<boolean>({ required: true })
 const { t } = useI18n({ useScope: 'global' })
@@ -100,7 +100,7 @@ async function confirmAssignment() {
           <ZButton type="danger" variant="plain" :disabled="assigning" @click="selectedIds = new Set()">
             {{ t('common.actions.reset') }}
           </ZButton>
-          <ZButton type="primary" :loading="assigning" :disabled="!proxy?.enabled || tooManySelected" @click="confirmAssignment">
+          <ZButton type="primary" :loading="assigning" :disabled="!proxy?.enabled || !proxy.available || tooManySelected" @click="confirmAssignment">
             {{ t('proxies.assignment.assignAction', { count: selectedIds.size }) }}
           </ZButton>
         </div>
@@ -145,6 +145,9 @@ async function confirmAssignment() {
       </p>
       <p v-if="proxy && !proxy.enabled" class="m-0 text-z-sm text-z-warning-text" role="alert">
         {{ t('proxies.assignment.enableFirst') }}
+      </p>
+      <p v-else-if="proxy && !proxy.available" class="m-0 text-z-sm text-z-warning-text" role="alert">
+        {{ t('proxies.assignment.availableFirst') }}
       </p>
     </div>
     <template #footer>

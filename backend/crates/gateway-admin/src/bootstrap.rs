@@ -76,6 +76,8 @@ async fn initialize_inner(
         client_distribution,
         system,
         client_key_verifier,
+        mihomo_runtime,
+        mihomo_subscription_fetcher,
     } = runtime;
     config
         .resolve_and_validate(Path::new("."))
@@ -142,6 +144,12 @@ async fn initialize_inner(
         snapshot.clone(),
         upstream_info.clone(),
     ));
+    let mihomo = Arc::new(use_case::mihomo::DefaultMihomoService::new(
+        store.mihomo(),
+        mihomo_subscription_fetcher,
+        mihomo_runtime,
+        snapshot.clone(),
+    ));
     let plugin_accounts = plugin_accounts.unwrap_or_else(|| {
         initialize_plugin_accounts(
             providers.clone(),
@@ -194,6 +202,7 @@ async fn initialize_inner(
             providers.clone(),
             upstream_info.clone(),
         )),
+        mihomo: mihomo.clone(),
         auth,
         accounts: accounts.clone(),
         account_groups: Arc::new(DefaultAccountGroupService::new(
@@ -232,7 +241,7 @@ async fn initialize_inner(
             runtime: store.account_runtime(),
             settings: store.settings(),
         });
-    let worker_contributions = vec![
+    let mut worker_contributions = vec![
         backup_task.into_worker()?,
         import_task.into_worker()?,
         freeze_recovery.into_worker()?,
@@ -243,6 +252,8 @@ async fn initialize_inner(
         }
         .into_worker()?,
     ];
+    mihomo.initialize_runtime().await?;
+    worker_contributions.push(mihomo.runtime_worker()?);
     Ok(AdminBundle {
         services,
         worker_contributions,

@@ -54,6 +54,8 @@ export function useProxies() {
   const testingConnection = computed(() => testingForm.value && !detectingLocation.value)
 
   function openForm(proxy: OutboundProxyRecord | null = null) {
+    if (proxy?.managed)
+      return
     editing.value = proxy
     form.name = proxy?.name ?? ''
     form.proxyUrl = ''
@@ -262,12 +264,14 @@ export function useProxies() {
   }
 
   function requestDelete(proxy: OutboundProxyRecord) {
+    if (proxy.managed)
+      return
     pendingDelete.value = proxy
     showDelete.value = true
   }
 
   async function setEnabled(proxy: OutboundProxyRecord, enabled: boolean) {
-    if (updating.has(proxy.id) || testing.has(proxy.id))
+    if (proxy.managed || updating.has(proxy.id) || testing.has(proxy.id))
       return
     updating.add(proxy.id)
     try {
@@ -292,6 +296,8 @@ export function useProxies() {
   }
 
   function toggleEnabled(proxy: OutboundProxyRecord) {
+    if (proxy.managed)
+      return
     if (proxy.enabled) {
       pendingDisable.value = proxy
       showDisable.value = true
@@ -308,7 +314,7 @@ export function useProxies() {
 
   async function confirmDelete() {
     const proxy = pendingDelete.value
-    if (!proxy || deleting.value)
+    if (!proxy || proxy.managed || deleting.value)
       return
     await deleteAction.run(async () => {
       await deleteProxy({ id: proxy.id, revision: proxy.revision })

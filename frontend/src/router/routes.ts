@@ -43,6 +43,11 @@ export const routes: RouteRecordRaw[] = [
         component: () => import('@/views/proxies/index.vue'),
       },
       {
+        path: 'mihomo',
+        name: 'mihomo',
+        component: () => import('@/views/mihomo/index.vue'),
+      },
+      {
         path: 'groups',
         name: 'groups',
         component: () => import('@/views/groups/index.vue'),

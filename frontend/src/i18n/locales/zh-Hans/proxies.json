@@ -172,6 +172,7 @@
       "alreadyAssigned": "已使用此代理",
       "selectionLimit": "一次最多分配 {count} 个账号",
       "enableFirst": "启用此代理后可分配账号",
+      "availableFirst": "此代理当前不可用",
       "assignAction": "分配 ({count})",
       "assigned": "已将 {count} 个账号分配至“{name}”"
     }

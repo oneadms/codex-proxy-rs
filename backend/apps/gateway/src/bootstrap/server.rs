@@ -4,6 +4,7 @@ use gateway_host::ConfigError;
 
 use super::{
     BootstrapError, GatewayConfig,
+    mihomo::AdminMihomoAdapter,
     plugins::{ManagementPorts, or_shutdown, prepare_plugins, service_middleware},
     startup::{Environment, Mode, Providers},
 };
@@ -21,6 +22,11 @@ pub async fn run() -> Result<(), BootstrapError> {
         version,
         plugin_http,
     } = environment;
+    let mihomo = std::sync::Arc::new(gateway_host::mihomo::MihomoHost::new(
+        config.mihomo,
+        host.runtime_data_dir().to_path_buf(),
+    )?);
+    let mihomo_adapter = std::sync::Arc::new(AdminMihomoAdapter::new(mihomo.clone()));
     let plugin_runtime = prepare_plugins(&store, plugin_cache, &version, plugin_http.clone())?;
     let core = gateway_core::prepare(
         store.core_ports(),
@@ -75,38 +81,46 @@ pub async fn run() -> Result<(), BootstrapError> {
             gateway_admin::ProviderUsageBillingProjector::new(providers.admin.clone()),
         ))
     );
-    let mut admin = or_shutdown!(
-        plugin_runtime,
-        gateway_admin::initialize_with_plugin_accounts(
-            config.admin,
-            config.client,
-            store.admin_ports(),
-            gateway_admin::AdminRuntimePorts {
-                upstream_info: Some(providers.peer.service()),
-                timezone,
-                service_middleware: service_middleware(core.snapshots(), &plugin_runtime),
-                providers: providers.admin,
-                plugin_preparation: plugin_runtime.clone(),
-                plugin_management: plugin_runtime.clone(),
-                published_snapshot: core.snapshots(),
-                plugin_inspector,
-                plugin_distribution,
-                pricing_source: std::sync::Arc::new(gateway_host::pricing::ModelsDevPricing),
-                snapshot: core.snapshot_control(),
-                account_probe: core.account_probe(),
-                proxy_probe: host.proxy_probe(provider_openai::build_reqwest_client_with_custom_ca),
-                client_distribution: host.client_distribution_resolver(),
-                system: host.system_operations(),
-                client_key_verifier: core.client_key_verifier(),
-            },
-            management.accounts.clone(),
-        )
-        .await
-    );
+    let admin_result = gateway_admin::initialize_with_plugin_accounts(
+        config.admin,
+        config.client,
+        store.admin_ports(),
+        gateway_admin::AdminRuntimePorts {
+            upstream_info: Some(providers.peer.service()),
+            timezone,
+            service_middleware: service_middleware(core.snapshots(), &plugin_runtime),
+            providers: providers.admin,
+            plugin_preparation: plugin_runtime.clone(),
+            plugin_management: plugin_runtime.clone(),
+            published_snapshot: core.snapshots(),
+            plugin_inspector,
+            plugin_distribution,
+            pricing_source: std::sync::Arc::new(gateway_host::pricing::ModelsDevPricing),
+            snapshot: core.snapshot_control(),
+            account_probe: core.account_probe(),
+            proxy_probe: host.proxy_probe(provider_openai::build_reqwest_client_with_custom_ca),
+            client_distribution: host.client_distribution_resolver(),
+            system: host.system_operations(),
+            client_key_verifier: core.client_key_verifier(),
+            mihomo_runtime: mihomo_adapter.clone(),
+            mihomo_subscription_fetcher: mihomo_adapter,
+        },
+        management.accounts.clone(),
+    )
+    .await;
+    let mut admin = match admin_result {
+        Ok(admin) => admin,
+        Err(error) => {
+            plugin_runtime.shutdown().await;
+            mihomo.shutdown().await;
+            return Err(error.into());
+        }
+    };
     let official_files = host.official_plugin_release_files();
     let official_identity = host.official_plugin_release_identity();
     let official_import = or_shutdown!(
         plugin_runtime,
+        mihomo,
         admin
             .services()
             .plugins()
@@ -131,6 +145,7 @@ pub async fn run() -> Result<(), BootstrapError> {
     let peer_node = or_shutdown!(plugin_runtime, store.peer_routing_id().await);
     let api = or_shutdown!(
         plugin_runtime,
+        mihomo,
         gateway_api::initialize(
             peer_node,
             config.api,
@@ -155,15 +170,21 @@ pub async fn run() -> Result<(), BootstrapError> {
         }
     });
     let http_dispatcher = api.dispatcher();
-    or_shutdown!(plugin_runtime, plugin_runtime.bind_http(&http_dispatcher));
+    or_shutdown!(
+        plugin_runtime,
+        mihomo,
+        plugin_runtime.bind_http(&http_dispatcher)
+    );
     host.report_startup_ready("API");
 
     or_shutdown!(
         plugin_runtime,
+        mihomo,
         plugin_runtime.bind_services(&admin.services().public_services())
     );
     or_shutdown!(
         plugin_runtime,
+        mihomo,
         plugin_runtime.bind_usage_queries(&admin.services().usage_data())
     );
 
@@ -184,10 +205,12 @@ pub async fn run() -> Result<(), BootstrapError> {
     ));
     or_shutdown!(
         plugin_runtime,
+        mihomo,
         host.start_workers(plan, store.worker_leader_lease(), store.diagnostics())
     );
     host.report_startup_ready("Workers");
     let served = host.serve(api.router()).await;
+    mihomo.shutdown().await;
     plugin_runtime.shutdown().await;
     Ok(served?)
 }

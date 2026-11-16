@@ -112,8 +112,10 @@ watch(search, () => {
               </span>
             </template>
             <template #status="{ row }">
-              <ZTag :type="row.enabled ? 'success' : 'default'">
-                {{ row.enabled ? t('common.status.enabled') : t('common.status.disabled') }}
+              <ZTag :type="row.enabled && row.available ? 'success' : 'default'">
+                {{ row.managed
+                  ? row.available ? t('common.status.available') : t('common.status.unavailable')
+                  : row.enabled ? t('common.status.enabled') : t('common.status.disabled') }}
               </ZTag>
             </template>
             <template #exitIp="{ row }">

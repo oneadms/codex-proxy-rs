@@ -93,6 +93,11 @@ openai:
   #   idle_timeout_ms: 300000 # 仅回收未绑定活跃客户端 WS 的空闲连接，必须大于零。
   #   stream_idle_timeout_ms: 300000
 
+mihomo:
+  # 使用 Mihomo 节点出口时，填写网关运行环境内可执行的 Mihomo Core 路径。
+  # 裸名称从 PATH 查找；带路径的相对值以 deploy/config.yaml 所在目录为基准。
+  executable: 'mihomo'
+
 # Compose 启动桥接区；密码仍只维护在 store 中。
 services:
   app-runtime:

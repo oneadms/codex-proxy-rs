@@ -13,7 +13,7 @@ import { useProxyAccounts } from '../composables/useProxyAccounts'
 import ProxyAssignAccountsModal from './ProxyAssignAccountsModal.vue'
 
 const props = defineProps<{
-  proxy: OutboundProxyRecord | null
+  proxy: Pick<OutboundProxyRecord, 'id' | 'name' | 'enabled' | 'available' | 'accountCount'> | null
 }>()
 
 const emit = defineEmits<{ changed: [] }>()
@@ -124,7 +124,7 @@ watch([
             <Search class="size-4.5 text-z-text-tertiary" />
           </template>
         </ZInput>
-        <ZButton type="primary" class="ml-auto shrink-0" :disabled="removing || !proxy?.enabled" @click="showAssign = true">
+        <ZButton type="primary" class="ml-auto shrink-0" :disabled="removing || !proxy?.enabled || !proxy.available" @click="showAssign = true">
           <template #icon>
             <Plus class="size-4" />
           </template>
@@ -133,6 +133,9 @@ watch([
       </div>
       <p v-if="proxy && !proxy.enabled" class="mt-0 mb-3 text-z-xs text-z-text-secondary">
         {{ t('proxies.assignment.enableFirst') }}
+      </p>
+      <p v-else-if="proxy && !proxy.available" class="mt-0 mb-3 text-z-xs text-z-text-secondary">
+        {{ t('proxies.assignment.availableFirst') }}
       </p>
       <ZTable :key="proxy?.id" class="min-h-0 shrink-0 [--z-table-row-height:64px]" :style="{ height: tableHeight }" :columns="columns" :data="rows" :loading="loading" :empty-text="emptyText">
         <template #identity="{ row }">

@@ -305,9 +305,9 @@ impl PluginsService {
             .get(id)
             .await
             .map_err(|error| map_store_error(error, "proxy"))?;
-        if !record.enabled {
+        if !record.enabled || !record.available {
             return Err(AdminError::invalid(
-                "下载代理已禁用，请启用或改用部署默认出口",
+                "下载代理已禁用或节点不可用，请检查或改用部署默认出口",
             ));
         }
         Ok(Some(PluginDistributionEgress::new(
@@ -331,7 +331,11 @@ impl PluginsService {
             }
             Err(error) => return Err(map_store_error(error, "proxy")),
         };
-        if current.revision.get() != egress.source.revision || current.proxy != egress.proxy {
+        if !current.enabled
+            || !current.available
+            || current.revision.get() != egress.source.revision
+            || current.proxy != egress.proxy
+        {
             return Err(AdminError::conflict("插件来源出站代理已变更，请重新校验"));
         }
         Ok(())

@@ -13,6 +13,9 @@ export * from './modules/keys'
 // 登录与会话
 export * from './modules/login'
 
+// Mihomo 订阅池
+export * from './modules/mihomo'
+
 // 插件管理
 export * from './modules/plugins'
 

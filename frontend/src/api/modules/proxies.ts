@@ -24,6 +24,8 @@ export interface OutboundProxyTest {
 export interface OutboundProxyRecord {
   maxWebsocketConnections: number
   enabled: boolean
+  managed: boolean
+  available: boolean
   autoLocation: boolean
   detectedLocation: DetectedProxyLocation | null
   location: RequestLocation | null

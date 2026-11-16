@@ -1,0 +1,54 @@
+{
+  "mihomo": {
+    "page": {
+      "description": "管理 Mihomo 订阅与固定节点出口",
+      "subscriptions": "订阅",
+      "nodes": "节点",
+      "emptySubscriptions": "暂无 Mihomo 订阅",
+      "emptyNodes": "当前订阅没有节点",
+      "searchNodes": "搜索节点",
+      "searchPlaceholder": "按名称搜索节点",
+      "noNodeMatches": "没有找到匹配的节点",
+      "available": "可用",
+      "unavailable": "不可用",
+      "notSelected": "选择订阅查看节点",
+      "viewAccounts": "查看 {name} 的 {count} 个绑定账号"
+    },
+    "columns": {
+      "subscriptionName": "订阅名称",
+      "nodeCount": "节点数",
+      "subscriptionUrl": "订阅地址",
+      "nodeName": "节点名称",
+      "type": "类型",
+      "endpoint": "出口",
+      "availability": "状态",
+      "accounts": "绑定账号",
+      "updatedAt": "更新时间"
+    },
+    "actions": {
+      "create": "添加订阅",
+      "viewNodes": "查看节点",
+      "refresh": "刷新订阅",
+      "edit": "编辑订阅",
+      "delete": "删除订阅",
+      "confirmDelete": "确认删除",
+      "deleteDescription": "解除节点关联后才能删除订阅“{name}”",
+      "saved": "订阅已保存",
+      "refreshed": "订阅已刷新",
+      "deleted": "订阅已删除"
+    },
+    "editor": {
+      "createTitle": "添加 Mihomo 订阅",
+      "editTitle": "编辑 Mihomo 订阅",
+      "name": "订阅名称",
+      "namePlaceholder": "输入订阅名称",
+      "url": "订阅地址",
+      "urlPlaceholder": "粘贴 Mihomo 订阅地址",
+      "urlOptionalPlaceholder": "留空以保留当前订阅地址",
+      "urlHelp": "订阅地址已保存时不会回显",
+      "nameRequired": "请填写订阅名称",
+      "urlRequired": "请填写订阅地址",
+      "save": "保存订阅"
+    }
+  }
+}

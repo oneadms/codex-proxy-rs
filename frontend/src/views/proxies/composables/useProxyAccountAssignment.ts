@@ -11,7 +11,7 @@ const MAX_ASSIGNMENT_ACCOUNTS = 1000
 
 export function useProxyAccountAssignment(options: {
   isOpen: () => boolean
-  proxy: () => OutboundProxyRecord | null
+  proxy: () => Pick<OutboundProxyRecord, 'id' | 'name' | 'enabled' | 'available' | 'accountCount'> | null
   onAssigned: () => void
 }) {
   const search = shallowRef('')
@@ -45,7 +45,7 @@ export function useProxyAccountAssignment(options: {
   async function assign() {
     const proxy = options.proxy()
     const accountIds = [...selection.selectedIds.value]
-    if (!options.isOpen() || !proxy?.enabled || !accountIds.length || tooManySelected.value)
+    if (!options.isOpen() || !proxy?.enabled || !proxy.available || !accountIds.length || tooManySelected.value)
       return false
     return await action.run(async () => {
       // 只写代理字段，保留账号的凭据、分组与调度设置

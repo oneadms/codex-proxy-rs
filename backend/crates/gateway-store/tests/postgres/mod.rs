@@ -29,6 +29,7 @@ mod control_plane;
 mod execution;
 mod execution_buffer;
 mod health;
+mod mihomo;
 mod observability;
 mod ops_events;
 mod plugins;

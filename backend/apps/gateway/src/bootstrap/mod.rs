@@ -2,6 +2,7 @@
 
 mod command;
 mod config;
+mod mihomo;
 mod plugins;
 mod server;
 mod startup;

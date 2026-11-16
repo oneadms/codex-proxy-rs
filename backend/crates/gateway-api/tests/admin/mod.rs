@@ -60,6 +60,7 @@ use gateway_admin::{
     },
     ports::{
         client_distribution::ClientDistributionResolver,
+        mihomo::{MihomoRuntime, MihomoStore, MihomoSubscriptionFetcher},
         provider::{ProviderAdmin, ProviderAdminError, ProviderAdminErrorKind},
         store::{
             AccountGroupStore, AccountRuntimeStore, AccountStore, AdminAccountStorePorts,
@@ -92,6 +93,7 @@ mod client_keys;
 mod compression;
 mod error_diagnostics;
 mod errors;
+mod mihomo;
 mod observability;
 mod proxies;
 mod settings;
@@ -185,6 +187,7 @@ impl AdminTestFixture {
                 unused.clone(),
                 account_groups.clone(),
                 Arc::new(proxies::MemoryProxies::default()),
+                unused.clone(),
             ),
             auth.clone(),
             client_keys.clone(),
@@ -244,6 +247,8 @@ impl AdminTestFixture {
                 client_distribution: Arc::new(StaticClientDistribution),
                 system,
                 client_key_verifier: verifier.unwrap_or_else(|| Arc::new(UnusedClientKeyVerifier)),
+                mihomo_runtime: Arc::new(UnusedMihomoRuntime),
+                mihomo_subscription_fetcher: Arc::new(UnusedMihomoRuntime),
             },
         )
         .await
@@ -2009,6 +2014,109 @@ fn unsupported_provider() -> ProviderAdminError {
 
 fn unavailable_system() -> SystemOperationError {
     SystemOperationError::new(SystemOperationErrorKind::Internal, "unused test operation")
+}
+
+struct UnusedMihomoRuntime;
+
+#[async_trait]
+impl MihomoRuntime for UnusedMihomoRuntime {
+    async fn validate(
+        &self,
+        _: &[gateway_admin::model::mihomo::MihomoNodeConfig],
+    ) -> Result<(), gateway_admin::model::AdminError> {
+        Ok(())
+    }
+
+    async fn apply(
+        &self,
+        _: Vec<gateway_admin::model::mihomo::MihomoRuntimeNode>,
+    ) -> Result<(), gateway_admin::model::AdminError> {
+        Ok(())
+    }
+
+    async fn shutdown(&self) {}
+}
+
+#[async_trait]
+impl MihomoSubscriptionFetcher for UnusedMihomoRuntime {
+    async fn fetch(
+        &self,
+        _: &str,
+    ) -> Result<Vec<gateway_admin::model::mihomo::MihomoNodeConfig>, gateway_admin::model::AdminError>
+    {
+        Err(gateway_admin::model::AdminError::unavailable(
+            "unused mihomo subscription fetcher",
+        ))
+    }
+}
+
+#[async_trait]
+impl MihomoStore for UnusedStore {
+    async fn subscriptions(
+        &self,
+    ) -> AdminStoreResult<Vec<gateway_admin::model::mihomo::MihomoSubscription>> {
+        Err(unavailable("mihomo subscriptions"))
+    }
+
+    async fn subscription(
+        &self,
+        _: &str,
+    ) -> AdminStoreResult<gateway_admin::model::mihomo::MihomoSubscription> {
+        Err(not_found("mihomo subscription"))
+    }
+
+    async fn create(
+        &self,
+        _: gateway_admin::model::mihomo::NewMihomoSubscription,
+        _: Vec<gateway_admin::model::mihomo::MihomoNodeConfig>,
+        _: &MutationContext,
+    ) -> AdminStoreResult<gateway_admin::model::mihomo::MihomoRefreshResult> {
+        Err(unavailable("mihomo create"))
+    }
+
+    async fn update(
+        &self,
+        _: gateway_admin::model::mihomo::UpdateMihomoSubscription,
+        _: Option<Vec<gateway_admin::model::mihomo::MihomoNodeConfig>>,
+        _: &MutationContext,
+    ) -> AdminStoreResult<gateway_admin::model::mihomo::MihomoRefreshResult> {
+        Err(unavailable("mihomo update"))
+    }
+
+    async fn sync_nodes(
+        &self,
+        _: &str,
+        _: Revision,
+        _: Vec<gateway_admin::model::mihomo::MihomoNodeConfig>,
+        _: &MutationContext,
+    ) -> AdminStoreResult<gateway_admin::model::mihomo::MihomoRefreshResult> {
+        Err(unavailable("mihomo sync"))
+    }
+
+    async fn delete(
+        &self,
+        _: &str,
+        _: Revision,
+        _: &MutationContext,
+    ) -> AdminStoreResult<Revision> {
+        Err(unavailable("mihomo delete"))
+    }
+
+    async fn nodes(
+        &self,
+        _: gateway_admin::model::mihomo::MihomoNodeQuery,
+    ) -> AdminStoreResult<gateway_admin::model::mihomo::MihomoNodePage> {
+        Err(unavailable("mihomo nodes"))
+    }
+
+    async fn runtime_snapshot(
+        &self,
+    ) -> AdminStoreResult<gateway_admin::model::mihomo::MihomoRuntimeSnapshot> {
+        Ok(gateway_admin::model::mihomo::MihomoRuntimeSnapshot {
+            config_revision: Revision::new(1).expect("valid revision"),
+            nodes: Vec::new(),
+        })
+    }
 }
 
 #[async_trait]

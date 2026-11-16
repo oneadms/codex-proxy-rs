@@ -207,6 +207,7 @@ async fn connect(
                 .with_timezone(config.timezone),
             ),
             Arc::new(postgres::PgProxyRepository::new(pool.clone())),
+            Arc::new(postgres::PgMihomoRepository::new(pool.clone())),
         ),
         Arc::new(AuthStoreAdapter {
             keys: postgres::PgAdminClientKeyStore::new(pool.clone()),

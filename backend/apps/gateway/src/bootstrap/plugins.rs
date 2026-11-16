@@ -27,6 +27,16 @@ macro_rules! or_shutdown {
             }
         }
     };
+    ($runtime:expr, $mihomo:expr, $result:expr) => {
+        match $result {
+            Ok(value) => value,
+            Err(error) => {
+                $runtime.shutdown().await;
+                $mihomo.shutdown().await;
+                return Err(error.into());
+            }
+        }
+    };
 }
 
 pub(super) use or_shutdown;

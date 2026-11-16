@@ -18,6 +18,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Puzzle,
+  Server,
   Settings,
   Sun,
   Users,
@@ -83,6 +84,11 @@ const navItems = computed<SidebarItem[]>(() => [
     index: '/proxies',
     label: t('navigation.proxies'),
     icon: Network,
+  },
+  {
+    index: '/mihomo',
+    label: t('navigation.mihomo'),
+    icon: Server,
   },
   {
     index: '/groups',

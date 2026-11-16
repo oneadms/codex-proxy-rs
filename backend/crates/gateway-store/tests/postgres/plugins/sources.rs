@@ -2,18 +2,23 @@
 
 use gateway_admin::{
     model::{
+        mihomo::{MihomoNodeConfig, NewMihomoSubscription},
         plugins::{
             PluginSource, PluginSourceEgress,
             distribution::{PluginSourceBinding, PluginUpdatePolicy, PluginUpdateSource},
         },
         proxies::{NewProxy, UpdateProxy},
     },
-    ports::{plugins::PluginStore, proxy::ProxyStore, store::AdminStoreErrorKind},
+    ports::{
+        mihomo::MihomoStore, plugins::PluginStore, proxy::ProxyStore, store::AdminStoreErrorKind,
+    },
 };
 use gateway_core::account::OutboundProxy;
 use gateway_store::postgres::{
-    PgPluginStore, PgProviderAccountRepository, PgProxyRepository, ProviderAccountRepository,
+    PgMihomoRepository, PgPluginStore, PgProviderAccountRepository, PgProxyRepository,
+    ProviderAccountRepository,
 };
+use secrecy::SecretString;
 
 use super::{
     super::TestDatabase,
@@ -412,4 +417,160 @@ async fn source_proxy_is_revision_fenced_and_referenced_until_the_artifact_is_de
     };
     assert_eq!(error.kind(), AdminStoreErrorKind::Conflict);
     database.close().await;
+}
+
+#[tokio::test]
+async fn disabled_or_unavailable_proxy_rejects_artifacts_and_source_changes_at_commit() {
+    for managed in [false, true] {
+        let Some(database) = TestDatabase::create("plugin_source_availability").await else {
+            return;
+        };
+        initialize_revision(&database).await;
+        let plugins = PgPluginStore::new(database.pool.clone());
+        let proxies = PgProxyRepository::new(database.pool.clone());
+        let saved = if managed {
+            let mihomo = PgMihomoRepository::new(database.pool.clone());
+            let created = mihomo
+                .create(
+                    NewMihomoSubscription {
+                        name: "Plugin subscription".to_owned(),
+                        url: SecretString::from("https://subscription.invalid/plugin".to_owned()),
+                    },
+                    vec![MihomoNodeConfig {
+                        name: "Plugin node".to_owned(),
+                        kind: "socks5".to_owned(),
+                        config: serde_json::json!({"server": "127.0.0.1", "port": 18080}),
+                    }],
+                    &context(),
+                )
+                .await
+                .unwrap();
+            let proxy_id: String =
+                sqlx::query_scalar("select proxy_id from mihomo_nodes where subscription_id = $1")
+                    .bind(&created.subscription.id)
+                    .fetch_one(&database.pool)
+                    .await
+                    .unwrap();
+            let saved = proxies.get(&proxy_id).await.unwrap();
+            mihomo
+                .sync_nodes(
+                    &created.subscription.id,
+                    created.subscription.revision,
+                    vec![],
+                    &context(),
+                )
+                .await
+                .unwrap();
+            let unavailable = proxies.get(&proxy_id).await.unwrap();
+            assert!(unavailable.enabled && !unavailable.available);
+            assert_eq!(unavailable.revision, saved.revision);
+            unavailable
+        } else {
+            let saved = proxies
+                .create(
+                    NewProxy {
+                        auto_location: false,
+                        test: None,
+                        location: None,
+                        name: "Disabled plugin proxy".to_owned(),
+                        proxy: OutboundProxy::parse("http://127.0.0.1:18080").unwrap(),
+                    },
+                    &context(),
+                )
+                .await
+                .unwrap()
+                .record;
+            proxies
+                .update(
+                    UpdateProxy {
+                        max_websocket_connections: None,
+                        enabled: Some(false),
+                        auto_location: None,
+                        test: None,
+                        location: None,
+                        id: saved.id,
+                        revision: saved.revision,
+                        name: saved.name,
+                        proxy: None,
+                    },
+                    &context(),
+                )
+                .await
+                .unwrap()
+                .record
+        };
+        let source = PluginSource::Github {
+            repository: "example/plugin".to_owned(),
+            tag: "v1.0.0".to_owned(),
+            asset: "plugin.tar.gz".to_owned(),
+            credential_ids: vec![],
+            outbound_proxy: Some(PluginSourceEgress {
+                id: saved.id.clone(),
+                revision: saved.revision.get(),
+            }),
+        };
+        let revision: i64 =
+            sqlx::query_scalar("select config_revision from runtime_settings where id = 1")
+                .fetch_one(&database.pool)
+                .await
+                .unwrap();
+        let audit_count: i64 = sqlx::query_scalar("select count(*) from admin_audit_events")
+            .fetch_one(&database.pool)
+            .await
+            .unwrap();
+        let Err(error) = plugins
+            .install_artifact(artifact('a', &["linux-x86_64"]), source, &context())
+            .await
+        else {
+            panic!("unusable source proxy must reject the artifact")
+        };
+        assert_eq!(error.kind(), AdminStoreErrorKind::Conflict);
+        assert!(plugins.list_artifacts().await.unwrap().is_empty());
+        assert!(plugins.list_update_sources().await.unwrap().is_empty());
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "select config_revision from runtime_settings where id = 1"
+            )
+            .fetch_one(&database.pool)
+            .await
+            .unwrap(),
+            revision
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("select count(*) from admin_audit_events")
+                .fetch_one(&database.pool)
+                .await
+                .unwrap(),
+            audit_count
+        );
+        plugins
+            .install_artifact(
+                artifact('b', &["linux-x86_64"]),
+                PluginSource::Upload,
+                &context(),
+            )
+            .await
+            .unwrap();
+        let before = plugins.list_update_sources().await.unwrap();
+        assert_eq!(
+            plugins
+                .change_update_source(
+                    PluginSourceBinding {
+                        plugin_id: "test.example".to_owned(),
+                        source: PluginUpdateSource::Github {
+                            repository: "example/plugin".to_owned(),
+                        },
+                        policy: PluginUpdatePolicy::Manual {},
+                        outbound_proxy_id: Some(saved.id),
+                    },
+                    &context(),
+                )
+                .await
+                .unwrap_err()
+                .kind(),
+            AdminStoreErrorKind::Conflict
+        );
+        assert_eq!(plugins.list_update_sources().await.unwrap(), before);
+        database.close().await;
+    }
 }

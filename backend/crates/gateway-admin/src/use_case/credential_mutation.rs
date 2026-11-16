@@ -157,8 +157,10 @@ pub(super) async fn pending_authorization(
                         .await
                         .map_err(|error| map_store_error(error, "proxy"))?;
                     proxy_id = Some(record.id);
-                    if !record.enabled {
-                        return Err(AdminError::invalid("代理已禁用，请启用后再选择"));
+                    if !record.enabled || !record.available {
+                        return Err(AdminError::invalid(
+                            "代理已禁用或节点不可用，请检查后再选择",
+                        ));
                     }
                     Some(record.proxy)
                 }

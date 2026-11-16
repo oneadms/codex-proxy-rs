@@ -147,20 +147,31 @@ async fn lock_proxy(
     id: &str,
     expected_revision: Option<u64>,
 ) -> AdminStoreResult<()> {
-    let revision: Option<i64> =
-        sqlx::query_scalar("select revision from outbound_proxies where id=$1 for share")
+    let proxy: Option<(i64, bool)> =
+        sqlx::query_as("select revision,enabled from outbound_proxies where id=$1 for share")
             .bind(id)
             .fetch_optional(&mut **tx)
             .await
             .map_err(|_| unavailable())?;
-    let Some(revision) = revision else {
+    let Some((revision, enabled)) = proxy else {
         return Err(if expected_revision.is_some() {
             conflict()
         } else {
             not_found()
         });
     };
-    if expected_revision.is_some_and(|expected| u64::try_from(revision).ok() != Some(expected)) {
+    if !enabled
+        || expected_revision.is_some_and(|expected| u64::try_from(revision).ok() != Some(expected))
+    {
+        return Err(conflict());
+    }
+    let node_available: Option<bool> =
+        sqlx::query_scalar("select available from mihomo_nodes where proxy_id=$1 for share")
+            .bind(id)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(|_| unavailable())?;
+    if node_available == Some(false) {
         return Err(conflict());
     }
     Ok(())

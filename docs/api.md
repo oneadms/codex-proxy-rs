@@ -1514,6 +1514,27 @@ API 的 `autoLocation` 默认为 `false`；开启时使用已检测位置，测�
 避免已轮换的凭据因代理状态变化而丢失。完成导入或请求取消后自动释放保护。
 OAuth 等待回调期间不持有保护；提交仍拒绝已删除或连接配置改变的代理
 
+### Mihomo 订阅池
+
+所有端点要求管理员身份。订阅地址和节点配置均为敏感信息，响应不返回订阅地址或节点凭据。订阅节点会生成独立的受管代理，可通过节点 `proxyId` 绑定账号；绑定后的账号继续使用该固定出口进行服务端请求
+
+| 方法 | 路径 | 请求 | 结果 |
+| --- | --- | --- | --- |
+| `GET` | `/api/admin/mihomo/subscriptions` | 无 | `{ items }` |
+| `POST` | `/api/admin/mihomo/subscriptions/create` | `{ name, url }` | `201`，订阅记录 |
+| `POST` | `/api/admin/mihomo/subscriptions/update` | `{ id, revision, name?, url? }` | 订阅记录 |
+| `POST` | `/api/admin/mihomo/subscriptions/refresh` | `{ id, revision }` | `{ subscription, nodeCount, configRevision }` |
+| `POST` | `/api/admin/mihomo/subscriptions/delete` | `{ id, revision }` | `null` |
+| `GET` | `/api/admin/mihomo/nodes` | `subscriptionId`、`page`、`pageSize`、`search` | `{ items, page }` |
+
+订阅记录包含 `id`、`name`、`hasUrl`、`nodeCount`、`revision`、`updatedAt` 和 `updatedAtDisplay`；`nodeCount` 只统计可用节点。创建时立即读取订阅并启动节点监听；更新只提交名称时不读取订阅，提交 `url` 时先读取、校验并同步节点；刷新使用已保存的地址。更新、刷新和删除均要求当前 `revision`，过期时返回 `40901`。删除仍有账号或插件绑定的节点时返回 `40901`，需先解除关联
+
+`url` 仅接受不带用户名、密码或 fragment 的 HTTP/HTTPS 地址，长度不超过 4096 字节。订阅响应最多 8 MiB，必须是包含 1–1000 个 `proxies` 条目的合法 YAML；节点名须为 1–100 个字符且不重复。仅导入单节点配置，不使用订阅中的组、规则和监听器；不支持 `dialer-proxy` 链式节点。读取或候选配置校验失败时本次变更不会提交；提交后若监听启动失败，接口会报依赖错误，需重新查询订阅状态
+
+节点查询要求 `subscriptionId`，默认 `page=1`、`pageSize=20`，页大小范围为 1–200。`search` 最长 256 字节，按节点名称进行不区分大小写的字面子串匹配。每项包含 `id`、`proxyId`、`name`、`type`、`available`、`accountCount` 和脱敏 `endpoint`；`page` 返回页码、页大小、总数和总页数。`proxyId` 可用于现有账号代理绑定合同；`accountCount` 是当前绑定该节点的账号数
+
+订阅更新移除的节点保留原节点与代理 ID，但标记为不可用，以避免静默改绑账号。不可用节点不再有本地监听；解除绑定后才可删除其订阅。节点监听仅绑定服务器 `127.0.0.1`，不能从远端客户端直接访问
+
 ### 账号连接测试 SSE
 
 `GET /api/admin/accounts/connection-test` 固定探测请求指定的账号，采用当前全局客户端身份，不参与普通账号轮换。成功流沿用
@@ -1715,13 +1736,16 @@ OAuth start 使用：
 {
   "provider": "openai",
   "name": "account name",
-  "accountId": null
+  "accountId": null,
+  "outboundProxyId": "mihomo_proxy_..."
 }
 ```
 
 重新授权已有账号时，start 请求仍携带 `provider` 和展示用 `name`，只额外提供目标 `accountId`；
 客户端不得提交 `credentialRevision`、旧 token 身份或其他并发控制字段。complete 请求也不重复提交
 `accountId`，后端通过 `flowId` 中保存的目标绑定完成授权
+
+新建授权可用 `outboundProxyId` 选择受管代理，包括 [Mihomo 节点](#mihomo-订阅池)的 `proxyId`。所选出口随授权流程保存，用于服务端授权相关请求并绑定到新账号；complete 请求不接受新的出口选择。授权链接由服务端返回，但管理员浏览器访问上游授权页面仍使用浏览器自身的网络出口
 
 `name` 可为空字符串，表示不设置本地名称；管理端新建授权默认留空，列表使用上游邮箱展示。
 提供名称时去除首尾空白，长度与字符限制沿用账号名称规则

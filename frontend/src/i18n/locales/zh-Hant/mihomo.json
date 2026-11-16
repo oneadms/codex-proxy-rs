@@ -1,0 +1,54 @@
+{
+  "mihomo": {
+    "page": {
+      "description": "管理 Mihomo 訂閱與固定節點出口",
+      "subscriptions": "訂閱",
+      "nodes": "節點",
+      "emptySubscriptions": "暫無 Mihomo 訂閱",
+      "emptyNodes": "目前訂閱沒有節點",
+      "searchNodes": "搜尋節點",
+      "searchPlaceholder": "按名稱搜尋節點",
+      "noNodeMatches": "找不到符合的節點",
+      "available": "可用",
+      "unavailable": "不可用",
+      "notSelected": "選擇訂閱以查看節點",
+      "viewAccounts": "查看綁定至 {name} 的 {count} 個帳號"
+    },
+    "columns": {
+      "subscriptionName": "訂閱名稱",
+      "nodeCount": "節點數",
+      "subscriptionUrl": "訂閱地址",
+      "nodeName": "節點名稱",
+      "type": "類型",
+      "endpoint": "出口",
+      "availability": "狀態",
+      "accounts": "綁定帳號",
+      "updatedAt": "更新時間"
+    },
+    "actions": {
+      "create": "新增訂閱",
+      "viewNodes": "查看節點",
+      "refresh": "重新整理訂閱",
+      "edit": "編輯訂閱",
+      "delete": "刪除訂閱",
+      "confirmDelete": "確認刪除",
+      "deleteDescription": "解除節點關聯後才能刪除訂閱「{name}」",
+      "saved": "訂閱已儲存",
+      "refreshed": "訂閱已重新整理",
+      "deleted": "訂閱已刪除"
+    },
+    "editor": {
+      "createTitle": "新增 Mihomo 訂閱",
+      "editTitle": "編輯 Mihomo 訂閱",
+      "name": "訂閱名稱",
+      "namePlaceholder": "輸入訂閱名稱",
+      "url": "訂閱地址",
+      "urlPlaceholder": "貼上 Mihomo 訂閱地址",
+      "urlOptionalPlaceholder": "留空以保留目前訂閱地址",
+      "urlHelp": "已儲存的訂閱地址不會回傳",
+      "nameRequired": "請輸入訂閱名稱",
+      "urlRequired": "請輸入訂閱地址",
+      "save": "儲存訂閱"
+    }
+  }
+}

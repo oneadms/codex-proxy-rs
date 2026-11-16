@@ -48,8 +48,10 @@ impl PluginProxyAccess for DefaultPluginProxyAccess {
             .await
             .map_err(|error| map_store_error(error, "proxy"))?;
         // 显式选择代理时必须有可用配置，不能沿用账号停用代理后使用部署默认出口的语义
-        if !record.enabled {
-            return Err(AdminError::invalid("代理已禁用，请启用后再选择"));
+        if !record.enabled || !record.available {
+            return Err(AdminError::invalid(
+                "代理已禁用或节点不可用，请检查后再选择",
+            ));
         }
         Ok(record.proxy)
     }

@@ -543,6 +543,8 @@ fn source_proxy() -> ProxyRecord {
         proxy: OutboundProxy::parse("http://user:secret@127.0.0.1:18080").unwrap(),
         revision: Revision::new(1).unwrap(),
         account_count: 0,
+        managed: false,
+        available: true,
         last_test_at: None,
         last_test: None,
         created_at: now,
@@ -611,34 +613,37 @@ async fn saved_source_proxy_is_resolved_for_queries_and_frozen_into_verified_sou
 
 #[tokio::test]
 async fn disabled_source_proxy_rejects_queries_and_downloads_before_network_access() {
-    let mut fixture = preview_fixture();
-    fixture.binding.get_mut().unwrap().outbound_proxy_id = Some("source-proxy".into());
-    let mut proxy = source_proxy();
-    proxy.enabled = false;
-    *fixture.proxy.get_mut().unwrap() = Some(proxy);
-    let fixture = Arc::new(fixture);
-    assert_eq!(
-        fixture
-            .service()
-            .check_update("test.example", &[])
-            .await
-            .unwrap_err()
-            .kind(),
-        AdminErrorKind::Invalid
-    );
-    let mut request = preview_request();
-    request.outbound_proxy_id = Some("source-proxy".into());
-    assert_eq!(
-        fixture
-            .service()
-            .verify_remote(request)
-            .await
-            .unwrap_err()
-            .kind(),
-        AdminErrorKind::Invalid
-    );
-    assert!(fixture.egresses.lock().unwrap().is_empty());
-    assert_eq!(*fixture.downloads.lock().unwrap(), 0);
+    for (enabled, available) in [(false, true), (true, false)] {
+        let mut fixture = preview_fixture();
+        fixture.binding.get_mut().unwrap().outbound_proxy_id = Some("source-proxy".into());
+        let mut proxy = source_proxy();
+        proxy.enabled = enabled;
+        proxy.available = available;
+        *fixture.proxy.get_mut().unwrap() = Some(proxy);
+        let fixture = Arc::new(fixture);
+        assert_eq!(
+            fixture
+                .service()
+                .check_update("test.example", &[])
+                .await
+                .unwrap_err()
+                .kind(),
+            AdminErrorKind::Invalid
+        );
+        let mut request = preview_request();
+        request.outbound_proxy_id = Some("source-proxy".into());
+        assert_eq!(
+            fixture
+                .service()
+                .verify_remote(request)
+                .await
+                .unwrap_err()
+                .kind(),
+            AdminErrorKind::Invalid
+        );
+        assert!(fixture.egresses.lock().unwrap().is_empty());
+        assert_eq!(*fixture.downloads.lock().unwrap(), 0);
+    }
 }
 
 #[tokio::test]

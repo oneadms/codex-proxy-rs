@@ -30,8 +30,9 @@ use crate::{
 
 const ENTITY: &str = "outbound proxy";
 const SELECT: &str = "select p.*,
-    (select count(*) from provider_accounts a where a.outbound_proxy_id = p.id) as account_count
-    from outbound_proxies p";
+    (select count(*) from provider_accounts a where a.outbound_proxy_id = p.id) as account_count,
+    n.proxy_id is not null as managed, coalesce(n.available, true) as available
+    from outbound_proxies p left join mihomo_nodes n on n.proxy_id = p.id";
 
 #[derive(Clone)]
 pub struct PgProxyRepository {
@@ -58,17 +59,40 @@ struct PgProxyImportGuard {
 
 impl ProxyImportGuard for PgProxyImportGuard {}
 
+pub(super) async fn try_exclude_active_imports(
+    transaction: &mut Transaction<'_, Postgres>,
+    id: &str,
+) -> StoreResult<bool> {
+    sqlx::query_scalar("select pg_try_advisory_xact_lock(hashtextextended($1, 739219))")
+        .bind(id)
+        .fetch_one(&mut **transaction)
+        .await
+        .map_err(unavailable)
+}
+
 async fn exclude_active_imports(
     transaction: &mut Transaction<'_, Postgres>,
     id: &str,
 ) -> StoreResult<()> {
-    let acquired: bool =
-        sqlx::query_scalar("select pg_try_advisory_xact_lock(hashtextextended($1, 739219))")
+    let acquired = try_exclude_active_imports(transaction, id).await?;
+    if !acquired {
+        return Err(conflict(id));
+    }
+    Ok(())
+}
+
+async fn ensure_unmanaged(
+    transaction: &mut Transaction<'_, Postgres>,
+    id: &str,
+) -> StoreResult<()> {
+    let managed: bool =
+        sqlx::query_scalar("select exists(select 1 from mihomo_nodes where proxy_id = $1)")
             .bind(id)
             .fetch_one(&mut **transaction)
             .await
             .map_err(unavailable)?;
-    if !acquired {
+    // 节点入口由订阅维护，不能单独禁用后让关联账号意外改用直连
+    if managed {
         return Err(conflict(id));
     }
     Ok(())
@@ -115,6 +139,12 @@ fn record(row: PgRow) -> StoreResult<ProxyRecord> {
     Ok(ProxyRecord {
         enabled: row
             .try_get("enabled")
+            .map_err(|source| invalid().with_source(source))?,
+        managed: row
+            .try_get("managed")
+            .map_err(|source| invalid().with_source(source))?,
+        available: row
+            .try_get("available")
             .map_err(|source| invalid().with_source(source))?,
         auto_location: row
             .try_get("auto_location")
@@ -348,11 +378,11 @@ pub(crate) async fn resolve_proxy_selection(
     transaction: &mut Transaction<'_, Postgres>,
     selection: &AccountProxySelection,
 ) -> StoreResult<(Option<String>, Option<OutboundProxy>)> {
-    match selection {
-        AccountProxySelection::Direct => Ok((None, None)),
+    let resolved = match selection {
+        AccountProxySelection::Direct => (None, None),
         AccountProxySelection::Url(proxy) => {
             let (id, _) = ensure_proxy_for_url(transaction, proxy, None).await?;
-            Ok((Some(id), Some(proxy.clone())))
+            (Some(id), Some(proxy.clone()))
         }
         AccountProxySelection::Saved(id) => {
             let (value, enabled, limit): (String, bool, i64) = sqlx::query_as(
@@ -370,7 +400,7 @@ pub(crate) async fn resolve_proxy_selection(
             if !enabled {
                 return Err(conflict(id));
             }
-            Ok((
+            (
                 Some(id.clone()),
                 Some(
                     OutboundProxy::parse(&value)
@@ -379,9 +409,21 @@ pub(crate) async fn resolve_proxy_selection(
                             u32::try_from(limit).map_err(|source| invalid().with_source(source))?,
                         ),
                 ),
-            ))
+            )
+        }
+    };
+    if let Some(id) = &resolved.0 {
+        let node_available: Option<bool> =
+            sqlx::query_scalar("select available from mihomo_nodes where proxy_id = $1 for share")
+                .bind(id)
+                .fetch_optional(&mut **transaction)
+                .await
+                .map_err(unavailable)?;
+        if node_available == Some(false) {
+            return Err(conflict(id));
         }
     }
+    Ok(resolved)
 }
 
 async fn audit(
@@ -583,7 +625,7 @@ impl ProxyStore for PgProxyRepository {
             return Err(store_error(conflict(id)));
         }
         let record = match self.get(id).await.and_then(|record| {
-            if record.enabled {
+            if record.enabled && record.available {
                 Ok(record)
             } else {
                 Err(store_error(conflict(id)))
@@ -746,6 +788,9 @@ impl ProxyStore for PgProxyRepository {
         let revision = bump_config_revision_in_transaction(&mut transaction)
             .await
             .map_err(store_error)?;
+        ensure_unmanaged(&mut transaction, &command.id)
+            .await
+            .map_err(store_error)?;
         if let Some(proxy) = &command.proxy {
             lock_url(&mut transaction, proxy)
                 .await
@@ -850,6 +895,9 @@ impl ProxyStore for PgProxyRepository {
             .await
             .map_err(store_error)?;
         let config_revision = bump_config_revision_in_transaction(&mut transaction)
+            .await
+            .map_err(store_error)?;
+        ensure_unmanaged(&mut transaction, id)
             .await
             .map_err(store_error)?;
         // 先锁定代理并校验版本，阻止新绑定插入；后续解绑和删除共同提交

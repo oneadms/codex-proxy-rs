@@ -19,6 +19,7 @@ pub mod client_keys;
 mod compression;
 pub(crate) mod diagnostics;
 mod extract;
+pub mod mihomo;
 pub mod observability;
 mod plugins;
 pub mod presenter;
@@ -46,6 +47,7 @@ where
     Router::new()
         .merge(account_groups::router::<S>())
         .merge(proxies::router::<S>())
+        .merge(mihomo::router::<S>())
         .merge(plugins::router::<S>())
         .merge(accounts::router::<S>())
         .merge(backups::router::<S>())

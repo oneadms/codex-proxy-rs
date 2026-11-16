@@ -667,8 +667,10 @@ impl Environment {
                 account_probe: core.account_probe(),
                 proxy_probe: unavailable.clone(),
                 client_distribution: unavailable.clone(),
-                system: unavailable,
+                system: unavailable.clone(),
                 client_key_verifier: core.client_key_verifier(),
+                mihomo_runtime: unavailable.clone(),
+                mihomo_subscription_fetcher: unavailable.clone(),
             },
             access,
         )
@@ -906,6 +908,37 @@ impl Environment {
 }
 
 struct UnusedAdminRuntime;
+
+#[async_trait]
+impl gateway_admin::ports::mihomo::MihomoRuntime for UnusedAdminRuntime {
+    async fn validate(
+        &self,
+        _: &[gateway_admin::model::mihomo::MihomoNodeConfig],
+    ) -> Result<(), AdminError> {
+        Ok(())
+    }
+
+    async fn apply(
+        &self,
+        _: Vec<gateway_admin::model::mihomo::MihomoRuntimeNode>,
+    ) -> Result<(), AdminError> {
+        Ok(())
+    }
+
+    async fn shutdown(&self) {}
+}
+
+#[async_trait]
+impl gateway_admin::ports::mihomo::MihomoSubscriptionFetcher for UnusedAdminRuntime {
+    async fn fetch(
+        &self,
+        _: &str,
+    ) -> Result<Vec<gateway_admin::model::mihomo::MihomoNodeConfig>, AdminError> {
+        Err(AdminError::unavailable(
+            "unused mihomo subscription fetcher",
+        ))
+    }
+}
 
 #[async_trait]
 impl PluginDistribution for UnusedAdminRuntime {

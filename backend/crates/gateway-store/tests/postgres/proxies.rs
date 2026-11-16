@@ -212,6 +212,8 @@ async fn disabled_proxy_projects_direct_while_preserving_bindings_and_credential
         .unwrap()
         .record;
     assert!(saved.enabled);
+    assert!(!saved.managed);
+    assert!(saved.available);
     proxies
         .record_test(&saved.id, saved.revision, success(), &context())
         .await

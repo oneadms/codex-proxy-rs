@@ -125,14 +125,16 @@ async fn plugin_proxy_resolution_requires_enabled_configuration_without_account_
     use std::sync::Arc;
 
     let now = chrono::Utc::now();
-    let records: Vec<_> = [true, false]
+    let records: Vec<_> = [(true, true), (false, true), (true, false)]
         .into_iter()
-        .map(|enabled| ProxyRecord {
-            id: format!("proxy_{enabled}"),
+        .map(|(enabled, available)| ProxyRecord {
+            id: format!("proxy_{enabled}_{available}"),
             name: "Login".into(),
             proxy: OutboundProxy::parse("http://user:secret@127.0.0.1:8080").unwrap(),
             revision: Revision::new(1).unwrap(),
             enabled,
+            managed: !available,
+            available,
             auto_location: false,
             location: None,
             detected_location: None,
@@ -156,11 +158,15 @@ async fn plugin_proxy_resolution_requires_enabled_configuration_without_account_
         ..Default::default()
     }));
     assert_eq!(
-        access.resolve("proxy_true").await.unwrap(),
+        access.resolve("proxy_true_true").await.unwrap(),
         records[0].proxy
     );
     assert_eq!(
-        access.resolve("proxy_false").await.unwrap_err().kind(),
+        access.resolve("proxy_false_true").await.unwrap_err().kind(),
+        AdminErrorKind::Invalid
+    );
+    assert_eq!(
+        access.resolve("proxy_true_false").await.unwrap_err().kind(),
         AdminErrorKind::Invalid
     );
     assert!(access.resolve("missing").await.is_err());
@@ -176,8 +182,8 @@ async fn plugin_proxy_resolution_requires_enabled_configuration_without_account_
         search: String::new(),
     };
     let page = access.list(query()).await.unwrap();
-    assert_eq!(page.items.len(), 2);
-    assert!(!page.items[1].enabled);
+    assert_eq!(page.items.len(), 3);
+    assert!(!page.items[2].available);
     for invalid in [
         ProxyListQuery { page: 0, ..query() },
         ProxyListQuery {
@@ -206,63 +212,78 @@ async fn authorization_uses_selected_proxy_regardless_of_probe_status() {
     use std::sync::Arc;
 
     for kind in ["openai", "xai"] {
-        for probe_success in [None, Some(false), Some(true)] {
-            let events = events();
-            let now = chrono::Utc::now();
-            let services = super::AdminHarness::new()
-                .provider(FakeProviderAdmin::new(kind, events.clone()))
-                .accounts(FakeAccountStore::new(kind, events.clone()))
-                .proxies(Arc::new(TestProxies {
-                    record: Some(ProxyRecord {
-                        enabled: true,
-                        auto_location: false,
-                        detected_location: None,
-                        location: None,
-                        id: "proxy_oauth".to_owned(),
-                        name: "授权出口".to_owned(),
-                        proxy: OutboundProxy::parse("http://127.0.0.1:8080").unwrap(),
-                        revision: Revision::new(1).unwrap(),
-                        account_count: 0,
-                        last_test_at: probe_success.map(|_| now),
-                        last_test: probe_success.map(|success| ProxyTestResult {
-                            location: Default::default(),
-                            success,
-                            latency_ms: 10,
-                            exit_ip: None,
-                            exit_ipv4: None,
-                            exit_ipv6: None,
-                            message: "出口探测结果".to_owned(),
+        for available in [false, true] {
+            for probe_success in [None, Some(false), Some(true)] {
+                let events = events();
+                let now = chrono::Utc::now();
+                let services = super::AdminHarness::new()
+                    .provider(FakeProviderAdmin::new(kind, events.clone()))
+                    .accounts(FakeAccountStore::new(kind, events.clone()))
+                    .proxies(Arc::new(TestProxies {
+                        record: Some(ProxyRecord {
+                            enabled: true,
+                            managed: false,
+                            available,
+                            auto_location: false,
+                            detected_location: None,
+                            location: None,
+                            id: "proxy_oauth".to_owned(),
+                            name: "授权出口".to_owned(),
+                            proxy: OutboundProxy::parse("http://127.0.0.1:8080").unwrap(),
+                            revision: Revision::new(1).unwrap(),
+                            account_count: 0,
+                            last_test_at: probe_success.map(|_| now),
+                            last_test: probe_success.map(|success| ProxyTestResult {
+                                location: Default::default(),
+                                success,
+                                latency_ms: 10,
+                                exit_ip: None,
+                                exit_ipv4: None,
+                                exit_ipv6: None,
+                                message: "出口探测结果".to_owned(),
+                            }),
+                            created_at: now,
+                            updated_at: now,
                         }),
-                        created_at: now,
-                        updated_at: now,
-                    }),
-                    ..Default::default()
-                }))
-                .build()
-                .await;
-            let command = StartAuthorization {
-                outbound_proxy: Some(AccountProxySelection::Saved("proxy_oauth".to_owned())),
-                context: context("oauth-proxy-status"),
-                name: "授权账号".to_owned(),
-                reauthorization: None,
-            };
-            let result = if kind == "openai" {
-                services
-                    .credentials()
-                    .for_provider(&gateway_core::routing::ProviderKind::new("openai").unwrap())
-                    .unwrap()
-                    .start_authorization(command)
-                    .await
-            } else {
-                services
-                    .credentials()
-                    .for_provider(&gateway_core::routing::ProviderKind::new("xai").unwrap())
-                    .unwrap()
-                    .start_authorization(command)
-                    .await
-            };
-            assert!(result.is_ok(), "{kind}, {probe_success:?}: {result:?}");
-            assert_eq!(recorded(&events), ["provider.start_authorization"]);
+                        ..Default::default()
+                    }))
+                    .build()
+                    .await;
+                let command = StartAuthorization {
+                    outbound_proxy: Some(AccountProxySelection::Saved("proxy_oauth".to_owned())),
+                    context: context("oauth-proxy-status"),
+                    name: "授权账号".to_owned(),
+                    reauthorization: None,
+                };
+                let result = if kind == "openai" {
+                    services
+                        .credentials()
+                        .for_provider(&gateway_core::routing::ProviderKind::new("openai").unwrap())
+                        .unwrap()
+                        .start_authorization(command)
+                        .await
+                } else {
+                    services
+                        .credentials()
+                        .for_provider(&gateway_core::routing::ProviderKind::new("xai").unwrap())
+                        .unwrap()
+                        .start_authorization(command)
+                        .await
+                };
+                assert_eq!(
+                    result.is_ok(),
+                    available,
+                    "{kind}, {probe_success:?}: {result:?}"
+                );
+                assert_eq!(
+                    recorded(&events),
+                    if available {
+                        vec!["provider.start_authorization"]
+                    } else {
+                        vec![]
+                    }
+                );
+            }
         }
     }
 }
@@ -492,6 +513,8 @@ async fn batch_tests_share_capacity_preserve_order_and_release_slots_on_cancella
             proxy: OutboundProxy::parse("http://proxy.example:8080").unwrap(),
             revision: Revision::new(1).unwrap(),
             enabled: true,
+            managed: false,
+            available: true,
             auto_location: false,
             location: None,
             detected_location: None,

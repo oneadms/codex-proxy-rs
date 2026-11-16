@@ -13,6 +13,7 @@ pub mod client_keys;
 pub mod diagnostics;
 pub mod import_tasks;
 pub mod key_usage;
+pub mod mihomo;
 pub mod observability;
 pub mod peer_link;
 pub mod plugin_client_keys;

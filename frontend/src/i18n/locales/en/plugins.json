@@ -411,6 +411,7 @@
     "sourceProxy": {
       "deploymentDefault": "Deployment default",
       "disabledSuffix": "(disabled)",
+      "unavailableSuffix": "(unavailable)",
       "catalogUnavailable": "Selected proxy, directory unavailable",
       "label": "Download proxy"
     },

@@ -76,11 +76,11 @@ flowchart TB
 | `backend/apps/plugin-cli`（包名 `codex-proxy-plugin-cli`） | `cpr-plugin package` 校验作者清单并生成平台元数据、资源摘要与归档；内部仅依赖 SDK，不参与网关运行时加载 |
 | `gateway-protocol` | 跨层共享的 Responses、Messages 与 CPR 互联线协议、纯协议转换、SSE 编解码与无业务 owner 的解析事实，不依赖其他 workspace crate |
 | `gateway-core` | operation、canonical event、请求快照、路由、admission、attempt 协调、交付边界和计量 |
-| `gateway-admin` | 管理领域、Key 用量、互联共享查询与上游同步、Provider/Store 端口、审计语义、备份与历史保留策略 |
+| `gateway-admin` | 管理领域、Key 用量、互联共享查询与上游同步、Mihomo 订阅与节点绑定、Provider/Store 端口、审计语义、备份与历史保留策略 |
 | `gateway-api` | HTTP/WS/SSE 解码与交付、Admin 与 Key 用量 wire、静态 Web UI；不直接访问 Store 或具体 Provider |
 | `gateway-store` | PostgreSQL、Redis、S3/R2、`pg_dump` 适配器；不拥有业务策略 |
 | `gateway-egress` | Host 与 Provider 共用的 HTTP / WebSocket 出口选择，按目标应用环境代理和绕过规则 |
-| `gateway-host` | 配置加载、日志、HTTP 生命周期、Worker 监督与历史保留任务、系统更新、互联 HTTP 与外部价格源适配 |
+| `gateway-host` | 配置加载、日志、HTTP 生命周期、Worker 监督与历史保留任务、系统更新、Mihomo 订阅读取与本地节点进程、互联 HTTP 与外部价格源适配 |
 | `gateway-plugin/sdk`（包名 `gateway-plugin-sdk`） | 公开插件清单与线协议，独立于网关领域；异步收发通过可选 `io` feature 提供 |
 | `gateway-plugin/runtime`（包名 `gateway-plugin-runtime`） | 插件包校验、能力适配、双向 RPC 与发布集合；通过 Host 管理子进程和受管 HTTP |
 | `providers/openai` | OpenAI OAuth、API Key 凭据、账号选择、目录、额度和 Responses/Messages/Images/Search transport |
@@ -944,6 +944,7 @@ API 只输出各入口所需的字段白名单，不复用管理员的宽响应�
 | 状态 | 语义与执行所有者 | 存放位置 | 失效或退出后的处理 |
 | --- | --- | --- | --- |
 | 账号、credential、分组、Client Key、设置、审计与备份任务 | Admin 编排，Provider 解释凭据，Store 原子提交 | PostgreSQL | 已提交事实用于恢复配置；发布快照由这些事实构建 |
+| Mihomo 订阅、节点配置、稳定代理 ID 与账号绑定 | Admin 编排，Store 原子提交，Host 管理进程与监听 | PostgreSQL | Admin 从持久快照恢复本地监听，失败后按周期重新对账 |
 | 已接管但未落库的 Client Key 费用 | Core 提交结算，Store writer 持有待写队列 | Store 进程内存 | 运行期保留并重试，关闭时有界排空；未落库费用可能随进程退出丢失 |
 | Client Key 金额窗口与已落库费用事件 | Core 定义预算与时序，Store 执行事务 | PostgreSQL | 按请求 ID 幂等登记，日历／显式窗口共用账本；窗口版本及最近操作参数原子提交，独立于请求观测与日志保留策略 |
 | 请求、进度与运维观测 | Core 或相应操作所有者产生事实，Store 异步写入 | 有界内存队列与 PostgreSQL | 排队、写入或关闭失败可能丢失；已确定的客户端结果不随记录失败改变 |
@@ -1302,12 +1303,17 @@ Worker 由各 Bundle 贡献、由 Host 统一监督：
 - Host：历史保留任务，持有调度、单轮行数/批数/时长预算、取消和日志；Admin 校验[保留窗口](api.md#历史保留)，Store 执行有界批量删除
 - Core：`runtime` owner 的 RuntimeSnapshot 周期对账和 Redis change 订阅
 - Admin：S3/R2 备份 daemon，负责调度、执行、删除收敛与保留清理；
-  以及账号错误保护恢复 worker（到期解除或探测恢复）、重置卡自动使用和公共 CPR 互联同步
+  以及账号错误保护恢复 worker（到期解除或探测恢复）、重置卡自动使用、公共 CPR 互联同步和 Mihomo 本地运行时对账
 - Provider：credential refresh、quota/catalog 健康、账号预热和官方版本/etag 检查
 
 OpenAI 客户端画像由 Provider 每小时检查发布元数据，发布标识变化后才提取对应制品版本并发布画像。
 同版本的有效制品缓存每 24 小时续期，保留 30 天；续期保留原核验时间，失败不推进成功写入游标。
 版本及缓存更新失败保留当前画像，下轮继续尝试；Host 只监督调度与取消。
+
+Mihomo 由 Admin 在启动时读取节点与配置 revision 的同一持久快照，恢复本地监听。
+管理变更与 `mihomo_runtime` Worker 串行应用配置；Worker 正常每 5 秒对账，失败后由 Host 退避调度。
+已提交配置应用失败或调用取消后，后续周期重新读取并重放持久快照，应用成功后仅在需要时发布对应 revision。
+Host 的运行时适配只管理子进程与节点入口资源，不决定订阅状态或重放版本
 
 互联同步使用账号出口的受管 HTTP 客户端，不跟随跳转；网络等待不持有数据库事务。
 运行期排程、并发预算、连接失效和观测提交见 [CPR 互联观测](#cpr-互联观测)，失败遵守退避及上游 `Retry-After`
@@ -1361,6 +1367,7 @@ Compose 的 `stop_grace_period` 必须覆盖后台关闭预算并留出进程清
 ### 凭据、日志与诊断
 
 - Provider credential 以 Provider schema 的明文 JSON 保存在 PostgreSQL；数据库和备份必须按敏感数据保护
+- Mihomo 订阅地址与节点配置可能包含凭据；数据库备份和 `host.runtime_data_dir` 下的 `mihomo/` 运行目录均按敏感数据保护
 - `host.logging.oauth_recovery` 默认关闭，开启后将 OAuth 原始 AT/RT 写入独立文件；
   与普通文件日志开关分别控制，不输出到普通日志或 stdout。`.runtime/logs` 同样属于敏感数据
 - `host.logging.request_dump` 默认关闭；开启后独立请求转储包含原始请求头和正文，

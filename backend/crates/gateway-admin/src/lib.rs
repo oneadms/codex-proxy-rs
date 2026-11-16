@@ -33,6 +33,7 @@ pub use use_case::{
     client_keys::ClientKeyService,
     credentials::{CredentialsService, ProviderCredentials},
     import_tasks::ImportTasksService,
+    mihomo::MihomoService,
     observability::{ObservabilityService, ProviderUsageBillingProjector},
     proxies::ProxiesService,
     settings::SettingsService,
@@ -204,6 +205,7 @@ pub struct AdminServices {
     plugins: Arc<PluginsService>,
     plugin_management: Arc<PluginManagementService>,
     proxies: Arc<dyn ProxiesService>,
+    mihomo: Arc<dyn MihomoService>,
     auth: Arc<dyn AuthService>,
     key_usage: Arc<dyn KeyUsageService>,
     peer_link: Arc<dyn PeerLinkService>,
@@ -260,6 +262,11 @@ impl AdminServices {
     #[must_use]
     pub fn proxies(&self) -> &dyn ProxiesService {
         self.proxies.as_ref()
+    }
+
+    #[must_use]
+    pub fn mihomo(&self) -> &dyn MihomoService {
+        self.mihomo.as_ref()
     }
 
     #[must_use]
@@ -357,4 +364,6 @@ pub struct AdminRuntimePorts {
     pub client_distribution: Arc<dyn ClientDistributionResolver>,
     pub system: Arc<dyn SystemOperations>,
     pub client_key_verifier: Arc<dyn ClientKeyVerifier>,
+    pub mihomo_runtime: Arc<dyn ports::mihomo::MihomoRuntime>,
+    pub mihomo_subscription_fetcher: Arc<dyn ports::mihomo::MihomoSubscriptionFetcher>,
 }

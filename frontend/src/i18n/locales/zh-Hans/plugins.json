@@ -411,6 +411,7 @@
     "sourceProxy": {
       "deploymentDefault": "部署默认出口",
       "disabledSuffix": "（已禁用）",
+      "unavailableSuffix": "（不可用）",
       "catalogUnavailable": "已选代理（目录暂不可用）",
       "label": "下载代理"
     },
