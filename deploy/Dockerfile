@@ -97,9 +97,24 @@ RUN chmod +x /app/bin/codex-proxy-rs \
     && chmod 0755 /app/bin/plugins
 USER cpr
 
-# 二开部署随应用携带固定版本 Core，与网关共享 Pod 内的回环网络
-FROM metacubex/mihomo:v1.19.34@sha256:4c2495d705f152897a58eac410350f243835fd01ce2fe44949a571faa824d532 AS mihomo-core
+# Core 使用固定源码与修复版本依赖，避免官方预编译包中的已知漏洞
+FROM golang:1.26.11-bookworm@sha256:dc40a13b61304647ed7e5d581d246b86413dfc29d63c6d018310feb93cd98fc0 AS mihomo-core
+
+WORKDIR /src
+ADD --checksum=sha256:db0cc4145fe4024e9c2386bd4768bf23a69c8789610d56d7243819e2f77c0cfe \
+    https://codeload.github.com/MetaCubeX/mihomo/tar.gz/0455d0d28c4526937380505153e65a843d8612e8 /tmp/mihomo.tar.gz
+RUN tar -xzf /tmp/mihomo.tar.gz --strip-components=1 -C /src
+ARG TARGETARCH
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go get github.com/klauspost/compress@v1.18.7 \
+        golang.org/x/crypto@v0.58.0 golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0 \
+    && CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -mod=readonly \
+        -tags with_gvisor -trimpath \
+        -ldflags '-s -w -X github.com/metacubex/mihomo/constant.Version=v1.19.34-cpr' \
+        -o /tmp/mihomo .
 
 FROM runtime-prebuilt AS runtime-custom
 
-COPY --from=mihomo-core --chown=cpr:cpr --chmod=0755 /mihomo /app/bin/mihomo
+COPY --from=mihomo-core --chown=cpr:cpr --chmod=0755 /tmp/mihomo /app/bin/mihomo
+COPY --from=mihomo-core /src/LICENSE /usr/share/doc/mihomo/LICENSE
