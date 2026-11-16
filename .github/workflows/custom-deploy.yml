@@ -1,0 +1,185 @@
+name: Custom k3s deployment
+
+on:
+  push:
+    branches:
+      - custom/main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 数据库迁移期间不能取消部署，同一环境的更新顺序执行
+concurrency:
+  group: custom-production
+  cancel-in-progress: false
+
+jobs:
+  quality:
+    if: github.repository == 'oneadms/codex-proxy-rs' && github.ref == 'refs/heads/custom/main'
+    uses: ./.github/workflows/_quality.yml
+    with:
+      ref: ${{ github.sha }}
+      run_frontend: false
+
+  frontend:
+    if: github.repository == 'oneadms/codex-proxy-rs' && github.ref == 'refs/heads/custom/main'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/build-frontend
+        with:
+          upload-artifact: 'true'
+
+  binary:
+    if: github.repository == 'oneadms/codex-proxy-rs' && github.ref == 'refs/heads/custom/main'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    env:
+      CPR_GIT_SHA: ${{ github.sha }}
+      CPR_BUILD_TYPE: release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: toolchains
+        run: ruby .github/scripts/toolchains.rb >> "$GITHUB_OUTPUT"
+      - name: Record build time
+        run: echo "CPR_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/build-binary
+        with:
+          rust: ${{ steps.toolchains.outputs.rust }}
+          target: x86_64-unknown-linux-gnu
+          platform: linux-amd64
+          rust-image: ${{ steps.toolchains.outputs.rust_image }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: codex-proxy-rs-linux-amd64
+          path: dist/binaries/linux-amd64/
+          if-no-files-found: error
+          retention-days: 7
+
+  image:
+    needs: [quality, frontend, binary]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+    outputs:
+      digest: ${{ steps.publish.outputs.digest }}
+    env:
+      CPR_IMAGE: ghcr.io/oneadms/codex-proxy-rs:sha-${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: frontend-dist
+          path: dist/docker/web/dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: codex-proxy-rs-linux-amd64
+          path: dist/docker-artifacts/codex-proxy-rs-linux-amd64
+      - name: Prepare prebuilt image
+        env:
+          MATRIX_OS: linux
+          MATRIX_ARCH: amd64
+          MATRIX_BINARY: codex-proxy-rs
+        run: |
+          ruby -r './.github/scripts/release-metadata' -e '
+            ReleaseMetadata.seal_manifest(
+              "version" => ReleaseMetadata.version(YAML.load_file("release/version.yaml").fetch("version")),
+              "git_sha" => ReleaseMetadata.git("rev-parse", "HEAD")
+            )'
+          ruby .github/scripts/package-release.rb image
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build image with Mihomo Core
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/Dockerfile
+          target: runtime-custom
+          platforms: linux/amd64
+          load: true
+          tags: ${{ env.CPR_IMAGE }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/oneadms/codex-proxy-rs
+            org.opencontainers.image.revision=${{ github.sha }}
+          build-args: CPR_PREBUILT_DIR=dist/docker
+          no-cache-filters: runtime-base
+          cache-from: type=gha,scope=custom-amd64
+          cache-to: type=gha,mode=max,scope=custom-amd64
+      - name: Verify Mihomo executable
+        run: docker run --rm --entrypoint /app/bin/mihomo "$CPR_IMAGE" -v
+      - name: Verify runtime image
+        uses: ./.github/actions/verify-container
+        with:
+          image: ${{ env.CPR_IMAGE }}
+          platform: linux/amd64
+          artifact-name: custom-container-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish verified image
+        id: publish
+        run: |
+          set -euo pipefail
+          docker push "$CPR_IMAGE"
+          image_ref=$(docker image inspect --format '{{index .RepoDigests 0}}' "$CPR_IMAGE")
+          digest=${image_ref##*@}
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: image
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    environment:
+      name: production
+      url: https://cpr.xckjj.com
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Deploy exact image to k3s
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.K3S_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.K3S_SSH_KNOWN_HOSTS }}
+          SSH_HOST: ${{ vars.K3S_SSH_HOST }}
+          SSH_PORT: ${{ vars.K3S_SSH_PORT || '22' }}
+          IMAGE_DIGEST: ${{ needs.image.outputs.digest }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          umask 077
+          ssh_dir=$(mktemp -d)
+          trap 'rm -rf -- "$ssh_dir"' EXIT
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$ssh_dir/key"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$ssh_dir/known_hosts"
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          # 令牌只供本次拉取使用，GitHub 无需保存集群 kubeconfig
+          printf '%s\n%s\n' "$GITHUB_ACTOR" "$GHCR_TOKEN" |
+            ssh -T -i "$ssh_dir/key" -p "$SSH_PORT" \
+              -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 \
+              -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$ssh_dir/known_hosts" \
+              "root@$SSH_HOST" "deploy $GITHUB_SHA $IMAGE_DIGEST"
+      - name: Verify public endpoint
+        run: |
+          curl --fail --silent --show-error --max-time 20 \
+            --retry 3 --retry-delay 5 --retry-all-errors \
+            --user-agent 'Mozilla/5.0' https://cpr.xckjj.com/healthz
+          curl --fail --silent --show-error --max-time 20 \
+            --retry 3 --retry-delay 5 --retry-all-errors \
+            --user-agent 'Mozilla/5.0' --output /dev/null https://cpr.xckjj.com/
+      - name: Record deployment
+        env:
+          IMAGE_DIGEST: ${{ needs.image.outputs.digest }}
+        run: |
+          {
+            echo 'Deployed to https://cpr.xckjj.com'
+            echo "Commit: $GITHUB_SHA"
+            echo "Image: ghcr.io/oneadms/codex-proxy-rs@$IMAGE_DIGEST"
+          } >> "$GITHUB_STEP_SUMMARY"

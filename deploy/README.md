@@ -9,7 +9,7 @@
 | 安装与启动 | [手动安装](#手动安装) · [Windows 二进制部署](#windows-二进制部署) · [启动](#启动) · [Mihomo 节点出口](#mihomo-节点出口) · [公网访问](#公网访问) |
 | 接入客户端 | [客户端配置](#客户端配置) · [时区与客户端环境信息](#时区与客户端环境信息) · [登录与生图排查](#登录与生图排查) |
 | 日常运维 | [运行设置](#启动后的运行设置) · [小内存优化](#小内存优化) · [持久化与日志](#持久化与备份) · [请求排查](#请求错误排查) · [密码轮换](#密码语义) |
-| 更新与恢复 | [镜像升级](#镜像升级与源码构建) · [在线更新](#管理端在线更新) · [备份与恢复](#备份与恢复) · [停止与重启](#停止与重启) |
+| 更新与恢复 | [镜像升级](#镜像升级与源码构建) · [二开 k3s 流水线](#二开-k3s-流水线) · [在线更新](#管理端在线更新) · [备份与恢复](#备份与恢复) · [停止与重启](#停止与重启) |
 | 运行源码 | [开发与源码联调](../docs/development.md) |
 
 ## 配置归属
@@ -934,6 +934,55 @@ CPR_VERSION="$(ruby -ryaml -e 'puts YAML.load_file("release/version.yaml").fetch
 CPR_GIT_SHA="$(git rev-parse HEAD)" \
 CPR_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 docker compose -f deploy/compose.yaml build codex-proxy-rs
+```
+
+### 二开 k3s 流水线
+
+个人仓库 `oneadms/codex-proxy-rs` 的默认分支为 `custom/main`，推送该分支或手动运行
+[Custom k3s deployment](../.github/workflows/custom-deploy.yml) 会执行后端检查、前端检查与构建、
+容器验收，再发布 `ghcr.io/oneadms/codex-proxy-rs:sha-<提交>`，通过镜像 digest 更新
+`production/codex-proxy-rs`。`main` 只同步官方源码，不触发生产部署
+
+镜像使用 `runtime-custom` 构建目标，内含固定版本的 Mihomo Core；节点监听与网关共享
+Pod 回环网络，运行配置保存在现有 `cpr-data` 卷。流水线沿用 PostgreSQL、Redis、配置
+Secret、PVC、ClusterIP 和 Nginx，不重新安装集群或修改域名入口
+
+GitHub 仓库的 `production` Environment 只允许 `custom/main`，配置如下：
+
+| 类型 | 名称 | 内容 |
+| --- | --- | --- |
+| Secret | `K3S_SSH_PRIVATE_KEY` | 专用部署密钥，服务器限制为固定部署命令 |
+| Secret | `K3S_SSH_KNOWN_HOSTS` | 经核对的 SSH 主机公钥记录 |
+| Variable | `K3S_SSH_HOST` | k3s 服务器地址 |
+| Variable | `K3S_SSH_PORT` | SSH 端口，默认 `22` |
+
+服务器由管理员将 [deploy.sh](k3s/deploy.sh) 安装为 root 所有的
+`/usr/local/sbin/cpr-deploy-ci`（`0755`），并在 `/root/.ssh/authorized_keys` 中配置：
+
+```text
+restrict,command="/usr/local/sbin/cpr-deploy-ci" ssh-ed25519 <部署公钥> cpr-github-actions
+```
+
+部署命令只接受提交 SHA 和镜像 digest，通过标准输入接收本次 job 的 GHCR 令牌，
+将镜像预拉取到单节点 k3s 的 `k8s.io` 命名空间。应用使用 `IfNotPresent`，服务器无需
+保存长期仓库令牌，GitHub 也无需保存集群 kubeconfig。扩展到多节点前须调整镜像分发方式
+
+每次升级前在 `/opt/codex-proxy-rs/.runtime/ci-backups/<时间>-<提交>/` 保存数据库
+`postgres.dump` 与原 Deployment 配置，目录权限为 `0700`。备份可能包含凭据，按需保留并
+定期清理。数据库迁移失败或就绪超时会使流水线失败，不自动回退镜像；先检查应用状态和
+迁移记录，再按[人工恢复数据库](#人工恢复数据库)恢复。整库 `postgres.dump` 使用匹配版本
+的 `pg_restore` 恢复到空数据库，不能按 gzip SQL 归档的方式读取
+
+官方更新按以下顺序同步，只有最终推送 `custom/main` 才部署：
+
+```bash
+git fetch upstream main
+git switch main
+git merge --ff-only upstream/main
+git push origin main
+git switch custom/main
+git merge main
+git push origin custom/main
 ```
 
 ### 升级前检查

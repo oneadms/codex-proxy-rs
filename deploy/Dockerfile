@@ -96,3 +96,10 @@ RUN chmod +x /app/bin/codex-proxy-rs \
     && chmod 0555 /app/bin/plugins/official \
     && chmod 0755 /app/bin/plugins
 USER cpr
+
+# 二开部署随应用携带固定版本 Core，与网关共享 Pod 内的回环网络
+FROM metacubex/mihomo:v1.19.34@sha256:4c2495d705f152897a58eac410350f243835fd01ce2fe44949a571faa824d532 AS mihomo-core
+
+FROM runtime-prebuilt AS runtime-custom
+
+COPY --from=mihomo-core --chown=cpr:cpr --chmod=0755 /mihomo /app/bin/mihomo
