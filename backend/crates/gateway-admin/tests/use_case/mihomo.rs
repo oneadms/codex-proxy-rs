@@ -475,7 +475,10 @@ async fn unchanged_revisions_still_apply_runtime_without_republishing() {
         .build_bundle()
         .await;
     let (id, task) = runtime_worker(&mut bundle);
-    assert_eq!(runtime.applications(), [initial.nodes.clone()]);
+    assert_eq!(
+        runtime.applications().as_slice(),
+        std::slice::from_ref(&initial.nodes)
+    );
     assert!(publications.revisions.lock().unwrap().is_empty());
 
     task.run_cycle(context(id.clone(), CancellationToken::new()))
@@ -522,7 +525,10 @@ async fn cancelled_publication_is_retried_before_revision_is_deduplicated() {
     )
     .await
     .expect("publication started after runtime applied nodes");
-    assert_eq!(runtime.applications(), [updated.nodes.clone()]);
+    assert_eq!(
+        runtime.applications().as_slice(),
+        std::slice::from_ref(&updated.nodes)
+    );
 
     cancellation.cancel();
     tokio::time::timeout(Duration::from_secs(5), cycle)

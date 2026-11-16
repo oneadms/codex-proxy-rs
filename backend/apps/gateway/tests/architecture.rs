@@ -468,6 +468,7 @@ const ADAPTER_PUBLIC_MODULES: &[(&str, &[&str])] = &[
         &[
             "client_distribution",
             "config",
+            "mihomo",
             "outbound",
             "peer",
             "official_plugins",

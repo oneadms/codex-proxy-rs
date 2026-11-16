@@ -23,6 +23,8 @@ pub enum BootstrapError {
     #[error(transparent)]
     Host(#[from] gateway_host::HostError),
     #[error(transparent)]
+    Mihomo(#[from] gateway_host::mihomo::MihomoError),
+    #[error(transparent)]
     Outbound(#[from] gateway_host::outbound::HttpError),
     #[error(transparent)]
     Store(#[from] gateway_store::StoreError),

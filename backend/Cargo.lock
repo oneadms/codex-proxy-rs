@@ -914,6 +914,7 @@ dependencies = [
 name = "codex-proxy-rs"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
  "config",
  "gateway-admin",
  "gateway-api",

@@ -12,6 +12,7 @@ use super::{
 /// 按冻结顺序初始化全部 Bundle，并把进程阻塞权交给 Host
 pub async fn run() -> Result<(), BootstrapError> {
     let config = gateway_host::load_config::<GatewayConfig>()?;
+    let runtime_data_dir = config.host.runtime_data_dir().to_path_buf();
     let environment = Environment::initialize(config.host, config.store, Mode::Server).await?;
     let mut providers = Providers::initialize(config.openai, &environment).await?;
     let Environment {
@@ -24,7 +25,7 @@ pub async fn run() -> Result<(), BootstrapError> {
     } = environment;
     let mihomo = std::sync::Arc::new(gateway_host::mihomo::MihomoHost::new(
         config.mihomo,
-        host.runtime_data_dir().to_path_buf(),
+        runtime_data_dir,
     )?);
     let mihomo_adapter = std::sync::Arc::new(AdminMihomoAdapter::new(mihomo.clone()));
     let plugin_runtime = prepare_plugins(&store, plugin_cache, &version, plugin_http.clone())?;
