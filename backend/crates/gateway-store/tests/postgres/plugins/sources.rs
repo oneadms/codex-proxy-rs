@@ -463,7 +463,8 @@ async fn disabled_or_unavailable_proxy_rejects_artifacts_and_source_changes_at_c
                 .unwrap();
             let unavailable = proxies.get(&proxy_id).await.unwrap();
             assert!(unavailable.enabled && !unavailable.available);
-            assert_eq!(unavailable.revision, saved.revision);
+            // 下架会使旧探测失效，后续安装需使用当前版本验证不可用状态
+            assert_eq!(unavailable.revision.get(), saved.revision.get() + 1);
             unavailable
         } else {
             let saved = proxies
