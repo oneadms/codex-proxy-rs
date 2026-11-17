@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import type { FormRules } from '@codex-proxy/ui'
-import type { MihomoNode, MihomoSubscription } from '@/api'
+import type { MihomoNode, MihomoNodeSort, MihomoSubscription } from '@/api'
 
-import { defineTableColumns, ZButton, ZCard, ZConfirmDialog, ZDialog, ZForm, ZFormItem, ZIconButton, ZInput, ZPageHeader, ZPagination, ZTable, ZTag } from '@codex-proxy/ui'
-import { Eye, Pencil, Plus, RefreshCw, Search, Trash2, Users } from '@lucide/vue'
+import { defineTableColumns, ZButton, ZCard, ZConfirmDialog, ZDialog, ZForm, ZFormItem, ZIconButton, ZInput, ZPageHeader, ZPagination, ZSelect, ZTable, ZTag } from '@codex-proxy/ui'
+import { Eye, Globe, Pencil, Plus, RefreshCw, Search, Square, Trash2, Users, Wifi } from '@lucide/vue'
+import { useDocumentVisibility, useIntervalFn } from '@vueuse/core'
 import { computed, onMounted, reactive, shallowRef, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { createMihomoSubscription, deleteMihomoSubscription, getMihomoNodes, getMihomoSubscriptions, refreshMihomoSubscription, updateMihomoSubscription } from '@/api'
@@ -12,6 +13,8 @@ import { usePagedQuery } from '@/composables/usePagedQuery'
 import { useRequestState } from '@/composables/useRequestState'
 import { notification as ZNotification } from '@/utils/notification'
 import ProxyAccountsModal from '@/views/proxies/components/ProxyAccountsModal.vue'
+import ProxyRegion from '@/views/proxies/components/ProxyRegion.vue'
+import { useMihomoNodeTesting } from './composables/useMihomoNodeTesting'
 
 const { t } = useI18n({ useScope: 'global' })
 
@@ -21,6 +24,7 @@ const listRequest = useRequestState()
 const operation = useAsyncAction()
 const refreshingId = shallowRef('')
 const nodeSearch = shallowRef('')
+const nodeSort = shallowRef<MihomoNodeSort>('name')
 const showEditor = shallowRef(false)
 const editingSubscription = shallowRef<MihomoSubscription | null>(null)
 const pendingDelete = shallowRef<MihomoSubscription | null>(null)
@@ -68,8 +72,35 @@ const nodeQuery = usePagedQuery({
     ...pagination,
     subscriptionId: selectedSubscriptionId.value,
     search: nodeSearch.value.trim() || undefined,
+    sort: nodeSort.value,
   }, options),
 })
+const nodeTests = useMihomoNodeTesting({
+  subscriptionId: () => selectedSubscriptionId.value,
+  reload: async (subscriptionId) => {
+    if (subscriptionId === selectedSubscriptionId.value)
+      await nodeQuery.execute({ silent: true })
+  },
+})
+const visibility = useDocumentVisibility()
+useIntervalFn(() => {
+  if (visibility.value === 'visible' && selectedSubscriptionId.value && !nodeQuery.loading.value && !nodeTests.busy.value && !nodeTests.testingIds.value.size)
+    void nodeQuery.execute({ silent: true })
+}, 10000)
+const nodeSortOptions = computed(() => [
+  {
+    label: t('mihomo.sort.name'),
+    value: 'name',
+  },
+  {
+    label: t('mihomo.sort.latencyAsc'),
+    value: 'latencyAsc',
+  },
+  {
+    label: t('mihomo.sort.latencyDesc'),
+    value: 'latencyDesc',
+  },
+])
 const nodePagination = computed(() => ({
   currentPage: nodeQuery.page.value,
   pageSize: nodeQuery.pageSize.value,
@@ -137,6 +168,18 @@ const nodeColumns = computed(() => defineTableColumns<MihomoNode>([
     size: 'xl',
   },
   {
+    key: 'region',
+    label: t('mihomo.columns.region'),
+    kind: 'custom',
+    size: 'lg',
+  },
+  {
+    key: 'latency',
+    label: t('mihomo.columns.latency'),
+    kind: 'custom',
+    size: 'sm',
+  },
+  {
     key: 'available',
     label: t('mihomo.columns.availability'),
     kind: 'status',
@@ -148,6 +191,18 @@ const nodeColumns = computed(() => defineTableColumns<MihomoNode>([
     kind: 'custom',
     size: 'sm',
     align: 'center',
+  },
+  {
+    key: 'testedAt',
+    label: t('mihomo.columns.testedAt'),
+    kind: 'custom',
+    fixedWidth: true,
+  },
+  {
+    key: 'actions',
+    label: t('common.fields.actions'),
+    kind: 'actions',
+    fixedWidth: true,
   },
 ]))
 
@@ -303,6 +358,11 @@ watch(nodeSearch, (_value, _previous, onCleanup) => {
   onCleanup(() => clearTimeout(timer))
 })
 
+watch(nodeSort, () => {
+  if (selectedSubscriptionId.value)
+    void nodeQuery.reloadFromStart()
+})
+
 watch(showEditor, (open) => {
   editorForm.value?.clearValidate()
   if (!open)
@@ -431,10 +491,40 @@ onMounted(() => void loadSubscriptions())
                 <Search class="size-4.5 text-z-text-tertiary" />
               </template>
             </ZInput>
+            <ZSelect
+              v-model="nodeSort"
+              :options="nodeSortOptions"
+              class="w-40"
+              :aria-label="t('mihomo.sort.label')"
+              :disabled="!selectedSubscriptionId"
+            />
+            <ZButton
+              :loading="nodeTests.busy.value && nodeTests.detectingLocation.value"
+              :disabled="!selectedSubscriptionId || nodeTests.busy.value || !!nodeTests.testingIds.value.size"
+              @click="nodeTests.testAll(true)"
+            >
+              <Globe class="size-4" />
+              {{ t('mihomo.actions.detectAllLocations') }}
+            </ZButton>
+            <ZButton
+              :loading="nodeTests.busy.value && !nodeTests.detectingLocation.value"
+              :disabled="!selectedSubscriptionId || nodeTests.busy.value || !!nodeTests.testingIds.value.size"
+              @click="nodeTests.testAll(false)"
+            >
+              <Wifi class="size-4" />
+              {{ t('mihomo.actions.testAllLatency') }}
+            </ZButton>
+            <ZButton v-if="nodeTests.busy.value" :disabled="nodeTests.stopping.value" @click="nodeTests.stop">
+              <Square class="size-3.5" />
+              {{ t('mihomo.actions.stopTesting') }}
+            </ZButton>
           </div>
         </template>
         <template #body>
           <div class="flex h-full min-h-0 flex-col">
+            <p v-if="nodeTests.progress.value" class="m-0 mb-2 text-z-xs text-z-text-secondary" role="status" aria-live="polite">
+              {{ t('mihomo.page.testProgress', nodeTests.progress.value) }}
+            </p>
             <ZTable
               :key="selectedSubscriptionId"
               class="min-h-0 flex-1"
@@ -452,6 +542,15 @@ onMounted(() => void loadSubscriptions())
               <template #endpoint="{ row }">
                 <span class="block truncate font-mono text-z-xs text-z-text-secondary" :title="row.endpoint">{{ row.endpoint }}</span>
               </template>
+              <template #region="{ row }">
+                <ProxyRegion :proxy="row" class="text-z-sm" />
+              </template>
+              <template #latency="{ row }">
+                <span v-if="nodeTests.testingIds.value.has(row.id)" class="text-z-text-secondary">{{ t('proxies.page.underTest') }}</span>
+                <span v-else-if="row.lastTest?.success" class="whitespace-nowrap font-mono tabular-nums text-z-success-text">{{ row.lastTest.latencyMs }} ms</span>
+                <span v-else-if="row.lastTest" class="text-z-error-text" :title="row.lastTest.message">{{ t('common.status.failed') }}</span>
+                <span v-else class="text-z-text-quaternary">{{ t('proxies.page.notTested') }}</span>
+              </template>
               <template #available="{ row }">
                 <ZTag :type="row.available ? 'success' : 'default'">
                   {{ row.available ? t('mihomo.page.available') : t('mihomo.page.unavailable') }}
@@ -468,6 +567,32 @@ onMounted(() => void loadSubscriptions())
                   <Users class="size-3.5" aria-hidden="true" />
                   <span class="font-mono tabular-nums">{{ row.accountCount }}</span>
                 </ZButton>
+              </template>
+              <template #testedAt="{ row }">
+                {{ row.lastTestAtDisplay ?? '—' }}
+              </template>
+              <template #actions="{ row }">
+                <div class="flex items-center justify-end gap-1">
+                  <ZIconButton
+                    size="small"
+                    :title="t('mihomo.actions.detectLocation')"
+                    :aria-label="t('mihomo.actions.detectLocation')"
+                    :loading="nodeTests.testingIds.value.has(row.id)"
+                    :disabled="!row.available || nodeTests.busy.value || nodeTests.testingIds.value.has(row.id)"
+                    @click="nodeTests.testNode(row, true)"
+                  >
+                    <Globe class="size-3.5" />
+                  </ZIconButton>
+                  <ZIconButton
+                    size="small"
+                    :title="t('mihomo.actions.testLatency')"
+                    :aria-label="t('mihomo.actions.testLatency')"
+                    :disabled="!row.available || nodeTests.busy.value || nodeTests.testingIds.value.has(row.id)"
+                    @click="nodeTests.testNode(row, false)"
+                  >
+                    <Wifi class="size-3.5" />
+                  </ZIconButton>
+                </div>
               </template>
             </ZTable>
             <ZPagination

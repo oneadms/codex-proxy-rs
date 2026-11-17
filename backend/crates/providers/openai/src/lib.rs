@@ -65,6 +65,7 @@ pub async fn initialize(
     config: OpenAiConfig,
     ports: ProviderStorePorts,
     upstream_info: Arc<dyn gateway_core::account::UpstreamInfoSource>,
+    javascript: Arc<dyn gateway_admin::ports::javascript::JavaScriptRuntime>,
 ) -> Result<ProviderBundle, OpenAiInitializeError> {
     let provider_kind =
         ProviderKind::new("openai").map_err(|_| OpenAiInitializeError::InvalidProviderKind)?;
@@ -246,6 +247,7 @@ pub async fn initialize(
         profile,
         accounts,
         OpenAiAdminServices {
+            javascript,
             credentials: credential_admin,
             oauth: oauth_admin,
             profile_statistics,

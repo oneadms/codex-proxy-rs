@@ -4,7 +4,9 @@
 # 版本严格一致。升级数据库版本时只需同步修改这里与 deploy/compose.yaml。
 ARG POSTGRES_IMAGE=postgres:18-bookworm@sha256:bbf83594798e144bff365a9c191c5d779f181fb3135902064ab8ff11918020fc
 
-FROM node:26.13.1-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a53c0161664a011f7ff6b0f1 AS frontend-builder
+FROM node:26.13.1-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a53c0161664a011f7ff6b0f1 AS javascript-runtime
+
+FROM javascript-runtime AS frontend-builder
 
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
@@ -50,7 +52,7 @@ ENV TZ=UTC
 # 更新基础镜像已有的系统包，使固定 digest 的镜像也能获取 Debian 安全更新。
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl tzdata libpq5 \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl tzdata libpq5 libstdc++6 libatomic1 \
     && install -d /usr/lib/postgresql/18/bin \
     && ln -snf "/usr/share/zoneinfo/${TZ}" /etc/localtime \
     && printf '%s\n' "${TZ}" > /etc/timezone \
@@ -62,8 +64,11 @@ RUN apt-get update \
 
 COPY --from=pg-client /usr/lib/postgresql/18/bin/pg_dump /usr/lib/postgresql/18/bin/pg_dump
 COPY --from=pg-client /usr/lib/postgresql/18/bin/pg_restore /usr/lib/postgresql/18/bin/pg_restore
+COPY --from=javascript-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=javascript-runtime /usr/local/LICENSE /usr/share/doc/node/LICENSE
 RUN /usr/lib/postgresql/18/bin/pg_dump --version \
-    && /usr/lib/postgresql/18/bin/pg_restore --version
+    && /usr/lib/postgresql/18/bin/pg_restore --version \
+    && node --version
 
 WORKDIR /app
 ENV CPR_DEPLOYMENT_MODE=docker

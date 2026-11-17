@@ -85,6 +85,7 @@ pub struct CredentialImportResult {
 /// Provider 解析导入文档时只接收不透明文档，不接触 revision 或审计上下文
 pub struct PrepareCredentialImport {
     pub default_outbound_proxy: Option<gateway_core::account::OutboundProxy>,
+    pub default_request_location: Option<gateway_core::account::RequestLocation>,
     pub document: ProviderDocument,
 }
 

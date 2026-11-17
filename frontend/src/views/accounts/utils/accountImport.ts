@@ -50,10 +50,10 @@ function splitAccountDocuments(entry: AccountImportDocument): AccountImportDocum
   })
 }
 
-export function accountImportBatches(items: AccountImportParam[]): AccountImportParam[][] {
+export function accountImportBatches(items: AccountImportParam[], nodePoolId?: string): AccountImportParam[][] {
   const encoder = new TextEncoder()
   // UUID 固定 36 字符，计入信封及数组逗号后与实际 JSON 请求体使用同一字节上限
-  const envelopeBytes = encoder.encode(JSON.stringify({ submissionId: '00000000-0000-0000-0000-000000000000', items: [] })).length
+  const envelopeBytes = encoder.encode(JSON.stringify({ submissionId: '00000000-0000-0000-0000-000000000000', nodePoolId, items: [] })).length
   const batches: AccountImportParam[][] = []
   let batch: AccountImportParam[] = []
   let bytes = envelopeBytes
@@ -89,6 +89,30 @@ export function mixedImportDocuments(text: string): AccountImportDocument[] {
 }
 
 export function accountImportDocuments(provider: string, mode: string, text: string): AccountImportDocument[] {
+  if (provider === 'openai' && mode === 'protocol') {
+    const lines = text.split(/\r?\n/).map((value, index) => ({ value, line: index + 1 })).filter(entry => entry.value.trim())
+    if (!lines.length)
+      throw new Error(t('accounts.protocolLogin.empty'))
+    const usernames = new Set<string>()
+    return lines.map(({ value, line }) => {
+      const fields = value.split('----')
+      const username = fields[0]?.trim() ?? ''
+      if (fields.length !== 3 || !username || !fields[1] || !fields[2]?.trim())
+        throw new Error(t('accounts.protocolLogin.invalidLine', { line }))
+      if (usernames.has(username.toLowerCase()))
+        throw new Error(t('accounts.protocolLogin.duplicateLine', { line }))
+      usernames.add(username.toLowerCase())
+      return {
+        provider,
+        document: {
+          authentication_kind: 'protocol_login',
+          username,
+          password: fields[1],
+          totpSecret: fields[2].trim(),
+        },
+      }
+    })
+  }
   if (provider === 'openai' && (mode === 'access_token' || mode === 'refresh_token')) {
     const tokens = text.split(/\r?\n/).map(token => token.trim()).filter(Boolean)
     const label = mode === 'access_token'

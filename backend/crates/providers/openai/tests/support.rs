@@ -1,5 +1,8 @@
 //! Codex Provider 测试用内存 ports；不依赖 SQL、Redis 或 secret 加密
 
+mod javascript_runtime;
+pub use javascript_runtime::javascript_runtime;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

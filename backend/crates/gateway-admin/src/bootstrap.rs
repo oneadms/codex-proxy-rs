@@ -144,6 +144,14 @@ async fn initialize_inner(
         snapshot.clone(),
         upstream_info.clone(),
     ));
+    let proxies: Arc<dyn use_case::proxies::ProxiesService> =
+        Arc::new(use_case::proxies::DefaultProxiesService::new(
+            store.proxies(),
+            proxy_probe,
+            snapshot.clone(),
+            providers.clone(),
+            upstream_info.clone(),
+        ));
     let mihomo = Arc::new(use_case::mihomo::DefaultMihomoService::new(
         store.mihomo(),
         mihomo_subscription_fetcher,
@@ -158,7 +166,12 @@ async fn initialize_inner(
             upstream_info.clone(),
         )
     });
-    let import_tasks = use_case::import_tasks::DefaultImportTasksService::new(credentials.clone());
+    let import_tasks = use_case::import_tasks::DefaultImportTasksService::new(
+        credentials.clone(),
+        store.mihomo(),
+        store.proxies(),
+        proxies.clone(),
+    );
     let import_task = use_case::import_tasks::ImportTaskWorker(import_tasks.clone());
     let settings = initialize_settings(
         store.settings(),
@@ -195,13 +208,7 @@ async fn initialize_inner(
             store.plugin_state(),
         )),
         key_usage,
-        proxies: Arc::new(use_case::proxies::DefaultProxiesService::new(
-            store.proxies(),
-            proxy_probe,
-            snapshot.clone(),
-            providers.clone(),
-            upstream_info.clone(),
-        )),
+        proxies: proxies.clone(),
         mihomo: mihomo.clone(),
         auth,
         accounts: accounts.clone(),
@@ -254,6 +261,7 @@ async fn initialize_inner(
     ];
     mihomo.initialize_runtime().await?;
     worker_contributions.push(mihomo.runtime_worker()?);
+    worker_contributions.push(mihomo.probe_worker(proxies)?);
     Ok(AdminBundle {
         services,
         worker_contributions,

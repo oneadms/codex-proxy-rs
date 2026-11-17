@@ -110,7 +110,7 @@ struct ProbeRequest {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ProxyTestView {
+pub(super) struct ProxyTestView {
     location: gateway_admin::model::proxies::ProxyLocationDetection,
     success: bool,
     latency_ms: u64,

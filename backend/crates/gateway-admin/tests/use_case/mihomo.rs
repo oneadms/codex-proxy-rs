@@ -106,6 +106,24 @@ impl MihomoStore for SnapshotStore {
     async fn runtime_snapshot(&self) -> AdminStoreResult<MihomoRuntimeSnapshot> {
         Ok(self.0.lock().unwrap().clone())
     }
+
+    async fn probe_targets(
+        &self,
+    ) -> AdminStoreResult<Vec<gateway_admin::model::proxies::TestProxy>> {
+        Ok(self
+            .0
+            .lock()
+            .unwrap()
+            .nodes
+            .iter()
+            .take(2)
+            .map(|node| gateway_admin::model::proxies::TestProxy {
+                id: node.id.clone(),
+                revision: Revision::new(1).unwrap(),
+                detect_location: true,
+            })
+            .collect())
+    }
 }
 
 #[derive(Default)]

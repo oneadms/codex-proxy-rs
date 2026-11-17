@@ -59,10 +59,15 @@ export function useAccountOnboarding(options: {
     await creatingAccountAction.run(async () => {
       const form = createForm.value
       const settings = accountImportSettings(form)
-      const outboundProxyId = form.proxyMode === 'proxy'
+      const mode = form.mode
+      const nodePoolId = mode === 'protocol'
+        ? form.nodePoolId.trim()
+        : undefined
+      if (mode === 'protocol' && !nodePoolId)
+        throw new Error(t('accounts.protocolLogin.poolRequired'))
+      const outboundProxyId = mode !== 'protocol' && form.proxyMode === 'proxy'
         ? form.proxyId.trim()
         : undefined
-      const mode = form.mode
       if (mode === 'oauth')
         return
       const provider = accountCreateProvider(form)
@@ -98,11 +103,11 @@ export function useAccountOnboarding(options: {
           ? settings
           : { ...settings, name: undefined },
         outboundProxyId,
-      })))
+      })), nodePoolId)
       // 同一输入重试时复用每批标识，恢复丢失响应或部分提交，不重复执行 RT 交换
       const ids = submissionIds
       for (const [index, items] of batches.entries()) {
-        const task = await createAccountImportTask({ submissionId: ids[index] ??= generateRequestId(), items })
+        const task = await createAccountImportTask({ submissionId: ids[index] ??= generateRequestId(), nodePoolId, items })
         submitted += 1
         const finished = index === batches.length - 1
         if (finished)
@@ -193,7 +198,13 @@ export function useAccountOnboarding(options: {
           ? 'json'
           : accountImportModes(accountCreateProvider(createForm.value))[0]?.value ?? 'json',
       apiKey: emptyApiKeyAccountForm(),
-      importTexts: { access_token: '', refresh_token: '', json: '' },
+      importTexts: {
+        access_token: '',
+        refresh_token: '',
+        json: '',
+        protocol: '',
+      },
+      nodePoolId: '',
     }
   }, { flush: 'sync' })
 

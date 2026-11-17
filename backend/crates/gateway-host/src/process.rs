@@ -1,6 +1,9 @@
 //! 受管子进程的创建、退出通知与回收，不解释插件或其他业务协议
 
-use std::{num::NonZeroUsize, path::PathBuf, process::Stdio, sync::Arc};
+use std::{ffi::OsString, num::NonZeroUsize, path::PathBuf, process::Stdio, sync::Arc};
+
+mod javascript;
+pub use javascript::{JavaScriptConfig, NodeJavaScriptRuntime};
 
 use tokio::{
     io::AsyncReadExt as _,
@@ -10,6 +13,8 @@ use tokio::{
 
 pub struct ProcessSpec {
     pub executable: PathBuf,
+    pub arguments: Vec<OsString>,
+    pub environment: Vec<(OsString, OsString)>,
     pub directory: PathBuf,
     pub maximum_stderr_bytes: usize,
 }
@@ -102,13 +107,19 @@ fn spawn_process(
     spec: ProcessSpec,
     slot: tokio::sync::OwnedSemaphorePermit,
 ) -> Result<ProcessConnection, ProcessStartError> {
-    let mut child = Command::new(&spec.executable)
+    let mut command = Command::new(&spec.executable);
+    command
+        .args(&spec.arguments)
         .current_dir(&spec.directory)
         .env_clear()
+        .envs(spec.environment)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000);
+    let mut child = command
         .spawn()
         // 只保留错误类别与 OS 编号，不把进程路径、环境或输出带入诊断
         .map_err(|error| ProcessStartError::Spawn {

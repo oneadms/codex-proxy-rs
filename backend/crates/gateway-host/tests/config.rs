@@ -201,6 +201,7 @@ fn valid_config() -> HostConfig {
         ..SystemUpdateConfig::default()
     };
     HostConfig {
+        javascript: Default::default(),
         timezone: Default::default(),
         listen: ListenConfig {
             host: "127.0.0.1".to_owned(),

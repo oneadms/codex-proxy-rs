@@ -8,10 +8,11 @@ use gateway_admin::{
         MutationContext, Revision as AdminRevision,
         audit::MutationAuditOperation,
         mihomo::{
-            MihomoNode, MihomoNodeConfig, MihomoNodePage, MihomoNodeQuery, MihomoRefreshResult,
-            MihomoRuntimeNode, MihomoRuntimeSnapshot, MihomoSubscription, NewMihomoSubscription,
-            UpdateMihomoSubscription,
+            MihomoNode, MihomoNodeConfig, MihomoNodePage, MihomoNodeQuery, MihomoNodeSort,
+            MihomoRefreshResult, MihomoRuntimeNode, MihomoRuntimeSnapshot, MihomoSubscription,
+            NewMihomoSubscription, UpdateMihomoSubscription,
         },
+        proxies::TestProxy,
     },
     ports::{
         mihomo::MihomoStore,
@@ -235,6 +236,7 @@ async fn sync_nodes_in_transaction(
             .execute(&mut **transaction)
             .await
             .map_err(unavailable)?;
+            invalidate_node_probe(transaction, &node.proxy_id).await?;
             runtime_changed = true;
         }
     }
@@ -248,6 +250,7 @@ async fn sync_nodes_in_transaction(
                 {
                     return Err(conflict(subscription_id));
                 }
+                invalidate_node_probe(transaction, &current.proxy_id).await?;
                 runtime_changed = true;
             }
             sqlx::query(
@@ -310,34 +313,47 @@ async fn sync_nodes_in_transaction(
 }
 
 fn map_proxy_record(row: PgRow) -> StoreResult<MihomoNode> {
-    let endpoint = row
-        .try_get::<String, _>("proxy_url")
+    let id = row
+        .try_get("node_id")
         .map_err(|source| invalid().with_source(source))?;
-    let proxy = gateway_core::account::OutboundProxy::parse(&endpoint)
+    let kind = row
+        .try_get("kind")
         .map_err(|source| invalid().with_source(source))?;
+    let record = super::proxies::record(row)?;
     Ok(MihomoNode {
-        id: row
-            .try_get("id")
-            .map_err(|source| invalid().with_source(source))?,
-        proxy_id: row
-            .try_get("proxy_id")
-            .map_err(|source| invalid().with_source(source))?,
-        name: row
-            .try_get("source_name")
-            .map_err(|source| invalid().with_source(source))?,
-        kind: row
-            .try_get("kind")
-            .map_err(|source| invalid().with_source(source))?,
-        available: row
-            .try_get("available")
-            .map_err(|source| invalid().with_source(source))?,
-        account_count: u64::try_from(
-            row.try_get::<i64, _>("account_count")
-                .map_err(|source| invalid().with_source(source))?,
-        )
-        .map_err(|source| invalid().with_source(source))?,
-        endpoint: proxy.endpoint(),
+        id,
+        proxy_id: record.id,
+        name: record.name,
+        kind,
+        available: record.available,
+        account_count: record.account_count,
+        endpoint: record.proxy.endpoint(),
+        proxy_revision: record.revision,
+        auto_location: record.auto_location,
+        location: record.location,
+        detected_location: record.detected_location,
+        last_test: record.last_test,
+        last_test_at: record.last_test_at,
     })
+}
+
+async fn invalidate_node_probe(
+    transaction: &mut Transaction<'_, Postgres>,
+    proxy_id: &str,
+) -> StoreResult<()> {
+    // 本地监听地址不变，实际节点已变化；推进版本以拒绝旧出口的迟到探测结果
+    sqlx::query(
+        "update outbound_proxies set revision = revision + 1, updated_at = now(),
+         last_test_at = null, last_test_success = null, last_test_latency_ms = null,
+         last_test_ip = null, last_test_ipv4 = null, last_test_ipv6 = null,
+         last_test_message = null, detected_location_json = null,
+         last_location_detection_json = '{\"status\":\"notRequested\"}'::jsonb where id = $1",
+    )
+    .bind(proxy_id)
+    .execute(&mut **transaction)
+    .await
+    .map_err(unavailable)?;
+    Ok(())
 }
 
 fn map_foreign_key_error(error: sqlx::Error, id: &str) -> AdminStoreError {
@@ -756,20 +772,29 @@ impl MihomoStore for PgMihomoRepository {
         .fetch_one(&mut *transaction)
         .await
         .map_err(|source| store_error(unavailable(source)))?;
+        let sort = match query.sort {
+            MihomoNodeSort::Name => "name",
+            MihomoNodeSort::LatencyAsc => "latencyAsc",
+            MihomoNodeSort::LatencyDesc => "latencyDesc",
+        };
         let rows = sqlx::query(
-            "select n.id, n.proxy_id, n.source_name, n.kind, n.available, p.proxy_url,
+            "select p.*, n.id as node_id, n.kind, true as managed, n.available,
                     (select count(*) from provider_accounts a where a.outbound_proxy_id = n.proxy_id) as account_count
              from mihomo_nodes n join outbound_proxies p on p.id = n.proxy_id
              where n.subscription_id = $1 and strpos(lower(n.source_name), lower($2)) > 0
-             order by lower(n.source_name), n.id limit $3 offset $4",
+             order by case when $5 <> 'name' then n.available end desc,
+                      case when $5 = 'latencyAsc' and p.last_test_success then p.last_test_latency_ms end asc nulls last,
+                      case when $5 = 'latencyDesc' and p.last_test_success then p.last_test_latency_ms end desc nulls last,
+                      lower(n.source_name), n.id limit $3 offset $4",
         )
-        .bind(&query.subscription_id)
-        .bind(&query.search)
-        .bind(i64::from(query.page_size.get()))
-        .bind(i64::from(query.page - 1) * i64::from(query.page_size.get()))
-        .fetch_all(&mut *transaction)
-        .await
-        .map_err(|source| store_error(unavailable(source)))?;
+            .bind(&query.subscription_id)
+            .bind(&query.search)
+            .bind(i64::from(query.page_size.get()))
+            .bind(i64::from(query.page - 1) * i64::from(query.page_size.get()))
+            .bind(sort)
+            .fetch_all(&mut *transaction)
+            .await
+            .map_err(|source| store_error(unavailable(source)))?;
         let items = rows
             .into_iter()
             .map(map_proxy_record)
@@ -786,6 +811,39 @@ impl MihomoStore for PgMihomoRepository {
             page: query.page,
             page_size: query.page_size.get(),
         })
+    }
+
+    async fn probe_targets(&self) -> AdminStoreResult<Vec<TestProxy>> {
+        let rows = sqlx::query(
+            "select p.id, p.revision from mihomo_nodes n
+             join outbound_proxies p on p.id = n.proxy_id
+             where n.available and p.enabled and
+                (p.last_test_at is null or p.last_test_at < now() -
+                 case when p.last_test_success and p.last_location_detection_json->>'status' = 'detected'
+                      then interval '30 minutes' else interval '5 minutes' end)
+             order by p.last_test_at asc nulls first, n.id limit 2",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|source| store_error(unavailable(source)))?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(TestProxy {
+                    id: row
+                        .try_get("id")
+                        .map_err(|source| store_error(invalid().with_source(source)))?,
+                    revision: AdminRevision::new(
+                        u64::try_from(
+                            row.try_get::<i64, _>("revision")
+                                .map_err(|source| store_error(invalid().with_source(source)))?,
+                        )
+                        .map_err(|source| store_error(invalid().with_source(source)))?,
+                    )
+                    .map_err(|source| store_error(invalid().with_source(source)))?,
+                    detect_location: true,
+                })
+            })
+            .collect()
     }
 
     async fn runtime_snapshot(&self) -> AdminStoreResult<MihomoRuntimeSnapshot> {

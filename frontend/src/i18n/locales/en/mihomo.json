@@ -1,7 +1,7 @@
 {
   "mihomo": {
     "page": {
-      "description": "Manage Mihomo subscriptions and fixed node egress",
+      "description": "Manage subscriptions and fixed egress with automatic location and latency updates",
       "subscriptions": "Subscriptions",
       "nodes": "Nodes",
       "emptySubscriptions": "No Mihomo subscriptions",
@@ -12,7 +12,8 @@
       "available": "Available",
       "unavailable": "Unavailable",
       "notSelected": "Select a subscription to view its nodes",
-      "viewAccounts": "View {count} accounts bound to {name}"
+      "viewAccounts": "View {count} accounts bound to {name}",
+      "testProgress": "Processed {completed} / {total} nodes"
     },
     "columns": {
       "subscriptionName": "Subscription",
@@ -23,7 +24,10 @@
       "endpoint": "Egress",
       "availability": "Status",
       "accounts": "Bound accounts",
-      "updatedAt": "Updated"
+      "updatedAt": "Updated",
+      "region": "Exit location",
+      "latency": "Latency",
+      "testedAt": "Last probed"
     },
     "actions": {
       "create": "Add subscription",
@@ -35,7 +39,20 @@
       "deleteDescription": "Remove account and plugin references before deleting {name}",
       "saved": "Subscription saved",
       "refreshed": "Subscription refreshed",
-      "deleted": "Subscription deleted"
+      "deleted": "Subscription deleted",
+      "detectLocation": "Detect location",
+      "testLatency": "Test latency",
+      "detectAllLocations": "Detect all locations",
+      "testAllLatency": "Test all latencies",
+      "stopTesting": "Stop testing",
+      "nodeTested": "{name} tested, latency {latencyMs} ms",
+      "testsCompleted": "Connected {succeeded}, incomplete {failed}, location pending {locationsPending}"
+    },
+    "sort": {
+      "label": "Sort nodes",
+      "name": "Sort by name",
+      "latencyAsc": "Lowest latency first",
+      "latencyDesc": "Highest latency first"
     },
     "editor": {
       "createTitle": "Add Mihomo subscription",

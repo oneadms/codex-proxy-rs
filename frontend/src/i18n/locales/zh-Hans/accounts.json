@@ -1,5 +1,17 @@
 {
   "accounts": {
+    "protocolLogin": {
+      "label": "协议登录",
+      "description": "使用密码与 2FA 批量登录并完成 Codex 授权",
+      "pool": "节点池",
+      "poolRequired": "请选择节点池",
+      "allocation": "优先分配账号较少、延迟较低的可用节点，并跟随节点位置和时区",
+      "accounts": "账号，每行 username----password----2fa",
+      "revokeNotice": "登录后会退出其他会话，仅保留本次会话，登录与授权全程使用同一节点",
+      "empty": "请至少输入一个账号",
+      "invalidLine": "第 {line} 行需按 username----password----2fa 填写",
+      "duplicateLine": "第 {line} 行的用户名重复"
+    },
     "quotaSettings": {
       "badge": "额度暂停",
       "title": "额度桶设置",

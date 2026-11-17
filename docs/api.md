@@ -1201,7 +1201,7 @@ config 返回 `{ name, plaintextKey }`，仅读取服务端会话绑定的当前
 | `GET` | `/api/admin/accounts/detail` | `accountId` | 查询账号详情、额度和本地用量 |
 | `GET` | `/api/admin/accounts/export` | `accountIds`、`confirm=export_sensitive_accounts` | 显式导出最多 200 个账号的敏感 Provider 文档 |
 | `POST` | `/api/admin/accounts/import` | `{ provider, data, settings?, outboundProxyId? }` | 导入或按上游身份更新账号，可同时应用调度、分组设置与默认代理 |
-| `POST` | `/api/admin/accounts/import-tasks` | `{ submissionId, items: [{ provider, data, settings?, outboundProxyId? }] }` | 接受后台导入，返回 HTTP 202 和任务摘要 |
+| `POST` | `/api/admin/accounts/import-tasks` | `{ submissionId, nodePoolId?, items: [{ provider, data, settings?, outboundProxyId? }] }` | 接受后台导入，返回 HTTP 202 和任务摘要 |
 | `GET` | `/api/admin/accounts/import-tasks` | 无 | 当前管理员仍保留的任务，按创建时间倒序 |
 | `GET` | `/api/admin/accounts/import-tasks/detail` | `taskId` | 任务摘要和逐条结果，不含原始凭据 |
 | `POST` | `/api/admin/accounts/import-tasks/stop` | `{ taskId }` | 跳过未开始的条目，已开始的条目继续完成 |
@@ -1525,13 +1525,17 @@ OAuth 等待回调期间不持有保护；提交仍拒绝已删除或连接配�
 | `POST` | `/api/admin/mihomo/subscriptions/update` | `{ id, revision, name?, url? }` | 订阅记录 |
 | `POST` | `/api/admin/mihomo/subscriptions/refresh` | `{ id, revision }` | `{ subscription, nodeCount, configRevision }` |
 | `POST` | `/api/admin/mihomo/subscriptions/delete` | `{ id, revision }` | `null` |
-| `GET` | `/api/admin/mihomo/nodes` | `subscriptionId`、`page`、`pageSize`、`search` | `{ items, page }` |
+| `GET` | `/api/admin/mihomo/nodes` | `subscriptionId`、`page`、`pageSize`、`search`、`sort` | `{ items, page }` |
 
 订阅记录包含 `id`、`name`、`hasUrl`、`nodeCount`、`revision`、`updatedAt` 和 `updatedAtDisplay`；`nodeCount` 只统计可用节点。创建时立即读取订阅并启动节点监听；更新只提交名称时不读取订阅，提交 `url` 时先读取、校验并同步节点；刷新使用已保存的地址。更新、刷新和删除均要求当前 `revision`，过期时返回 `40901`。删除仍有账号或插件绑定的节点时返回 `40901`，需先解除关联
 
-`url` 仅接受不带用户名、密码或 fragment 的 HTTP/HTTPS 地址，长度不超过 4096 字节。订阅响应最多 8 MiB，必须是包含 1–1000 个 `proxies` 条目的合法 YAML；节点名须为 1–100 个字符且不重复。仅导入单节点配置，不使用订阅中的组、规则和监听器；不支持 `dialer-proxy` 链式节点。读取或候选配置校验失败时本次变更不会提交；提交后若监听启动失败，接口会报依赖错误，需重新查询订阅状态
+`url` 仅接受不带用户名、密码或 fragment 的 HTTP/HTTPS 地址，长度不超过 4096 字节。读取时使用 `User-Agent: clash.meta` 请求 Clash/Mihomo YAML 格式。订阅响应最多 8 MiB，必须是包含 1–1000 个 `proxies` 条目的合法 YAML；节点名须为 1–100 个字符且不重复。仅导入单节点配置，不使用订阅中的组、规则和监听器；不支持 `dialer-proxy` 链式节点。读取或候选配置校验失败时本次变更不会提交；提交后若监听启动失败，接口会报依赖错误，需重新查询订阅状态
 
-节点查询要求 `subscriptionId`，默认 `page=1`、`pageSize=20`，页大小范围为 1–200。`search` 最长 256 字节，按节点名称进行不区分大小写的字面子串匹配。每项包含 `id`、`proxyId`、`name`、`type`、`available`、`accountCount` 和脱敏 `endpoint`；`page` 返回页码、页大小、总数和总页数。`proxyId` 可用于现有账号代理绑定合同；`accountCount` 是当前绑定该节点的账号数
+节点查询要求 `subscriptionId`，默认 `page=1`、`pageSize=20`，页大小范围为 1–200。`search` 最长 256 字节，按节点名称进行不区分大小写的字面子串匹配。`sort` 默认为 `name`，可选 `latencyAsc`、`latencyDesc`，在整个订阅范围排序后分页；延迟排序中不可用、未测试和测试失败的节点排在成功节点之后
+
+每项包含 `id`、`proxyId`、`proxyRevision`、`name`、`type`、`available`、`accountCount`、脱敏 `endpoint`，以及受管代理相同的 `autoLocation`、`location`、`detectedLocation`、`lastTest`、`lastTestAt`、`lastTestAtDisplay`；`page` 返回页码、页大小、总数和总页数。`proxyId` 可用于现有账号代理绑定合同；`accountCount` 是当前绑定该节点的账号数
+
+节点监听恢复后自动探测真实出口 IP、地理位置和连接延迟，每批最多两条，与手动代理测试共用并发限制。探测成功且位置已识别的节点每 30 分钟更新，其他结果在 5 分钟后重试。手动探测复用 `/api/admin/proxies/test`，提交 `id=proxyId`、`revision=proxyRevision` 和 `detectLocation`；`true` 同时请求地理位置，`false` 仅测试连接，已开启代理位置自动跟随时仍解析位置。探测不会变更账号绑定或自动开启请求位置跟随。订阅中的节点配置变化或节点不可用时清除旧探测结果并推进代理版本，旧版本探测结果返回冲突
 
 订阅更新移除的节点保留原节点与代理 ID，但标记为不可用，以避免静默改绑账号。不可用节点不再有本地监听；解除绑定后才可删除其订阅。节点监听仅绑定服务器 `127.0.0.1`，不能从远端客户端直接访问
 
@@ -1574,6 +1578,11 @@ OAuth 等待回调期间不持有保护；提交仍拒绝已删除或连接配�
 管理端通过后台任务导入账号，关闭页面不会取消执行。`submissionId` 为客户端生成的 UUID；同一管理员在任务记录
 保留期间使用相同标识和相同输入重新提交，会返回已有任务，内容改变则返回 409。修改输入须使用新标识
 
+任务可附带 `nodePoolId` 选择 Mihomo 订阅池，不能同时在条目中指定 `outboundProxyId`。
+服务端从已测通、已识别位置且启用可用的节点中分配出口，先比较已绑定账号数与当前进程内待执行、执行中条目的预留数，数量相同再按延迟升序及节点 ID 排序。
+每分配一个条目立即计入预留，停止或失败后释放预留，成功后由已绑定数量继续计数；节点可均衡复用，不设置单节点账号上限。
+所选节点在条目执行时开启位置自动跟随，OpenAI 账号请求使用节点位置和时区。没有符合条件的节点时拒绝创建任务，不使用部署默认出口。
+
 每个任务接受 1–200 个 `items`，请求体上限为 4 MiB。每个条目遵循下节的 Provider 文档与设置合同，独立处理
 并返回结果。批量 AT / RT 按非空输入顺序拆成单账号条目，因此可逐条统计；
 管理端上传的 OpenAI JSON 文件按 `accounts` 数组拆成单账号条目，每项保留该账号引用的代理，
@@ -1583,7 +1592,7 @@ OAuth 等待回调期间不持有保护；提交仍拒绝已删除或连接配�
 
 摘要字段为 `taskId`、`createdAt`、`finishedAt`（未结束为 null）、`stopRequested`、`total`、`counts`。
 `counts` 包含 `pending`、`running`、`succeeded`、`failed`、`unknown`、`skipped` 和 `importedAccounts`。
-详情追加 `items: [{ index, provider, status, accountIds, message }]`，`index` 从 1 开始；`status` 对应上述前六类状态。
+详情追加 `items: [{ index, provider, outboundProxyId, status, accountIds, message }]`，`index` 从 1 开始，未指定代理时 `outboundProxyId` 为 `null`；`status` 对应上述前六类状态。
 列表返回 `{ items: [摘要] }`。结果未知时保留 `unknown`，先核对账号目录再决定是否重新导入；服务端不自动重试凭据交换。
 停止请求可重复调用，已结束的任务保持原结果；未知、已过期或其他管理员的任务 ID 返回 404
 
@@ -1606,6 +1615,9 @@ OAuth 等待回调期间不持有保护；提交仍拒绝已删除或连接配�
 当前 xAI 导入上限为 16 MiB。内部 schema 由目标 Provider 独占解释：
 
 - OpenAI 接受单账号 OAuth 或 API Key 文档、`accounts` 数组（最多 200 项）、CPR 账号 bundle 和含代理引用的 sub2api 导出
+- OpenAI 协议登录接受单账号 `{ "authentication_kind": "protocol_login", "username": "用户邮箱", "password": "密码", "totpSecret": "2FA 密钥" }`。
+  `totpSecret` 使用 Base32 密钥或 `otpauth://` 地址，按 SHA1、6 位和 30 秒周期生成验证码；每个任务条目对应一个账号。
+  管理端的协议登录入口按每行 `username----password----2fa` 拆分输入，并要求选择节点池
 - OpenAI OAuth token 字段接受 `accessToken`、`refreshToken`、`idToken`，以及官方
   `auth.json` 中的 `access_token`、`refresh_token`、`id_token`，可以嵌套在 `tokens` 等账号 object 内；
   每项至少包含 AT 或 RT。仅含 `OPENAI_API_KEY` 的客户端代理配置不是 OAuth 账号导入材料；
@@ -1616,6 +1628,14 @@ OAuth 等待回调期间不持有保护；提交仍拒绝已删除或连接配�
 - xAI 批量导入逐条独立校验：失败条目跳过并记录日志，不中断其余条目，仅当没有任何条目成功时整个导入才报错
 - xAI API Key 不是受支持的账号 credential
 - OAuth 导入由目标 Provider 完成必要的 token exchange 或身份投影。API Key 导入校验凭据格式与地址，不调用 OAuth 或 ChatGPT 身份接口；可用性由模型目录和连接测试验证
+
+协议登录要求已绑定的代理及其位置和时区，从密码、2FA、登录跳转、会话管理到 Codex 授权与令牌交换使用同一个代理连接配置和独立 Cookie。
+登录后读取账号会话列表，保留唯一标记为 `is_current_device` 的会话，逐一退出其他会话并复查列表，确认成功后才请求 Codex 授权。
+回调 URL 只用于校验地址与 `state`、提取授权码，不实际请求 loopback 地址；授权码通过原代理交换令牌，再按普通 OAuth 导入合同入库并保留节点绑定。
+原始密码和 2FA 密钥只供本次内存任务使用，不作为账号凭据持久化。
+Sentinel SDK 通过同一代理实时下载，在受管 Node 进程中执行；SDK 的 fetch 与 XHR 请求交回当前账号的 HTTP 客户端，沿用代理、Cookie、设备标识与时区。
+需要邮箱验证码、手机验证或 SDK 无法完成的人工安全校验时终止当前条目；账号停用、代理失败、会话清理失败或回调校验失败时也不会继续授权或直连重试。
+运行环境要求见[协议登录运行时](../deploy/README.md#协议登录运行时)
 
 API Key 账号使用以下独立凭据形态：
 

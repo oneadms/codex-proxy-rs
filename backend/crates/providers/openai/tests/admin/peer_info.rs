@@ -1431,6 +1431,7 @@ async fn peer_fixture(
             Arc::new(RecordingDiagnostics::default()),
         ),
         reader.clone(),
+        crate::support::javascript_runtime(),
     )
     .await
     .unwrap();

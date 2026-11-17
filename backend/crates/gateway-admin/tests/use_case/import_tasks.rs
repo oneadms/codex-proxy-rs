@@ -34,6 +34,7 @@ fn command(id: Uuid, count: usize) -> SubmitImportTask {
         items: (0..count)
             .map(|_| ImportTaskInput {
                 provider: ProviderKind::new("openai").unwrap(),
+                follow_proxy_location: false,
                 command: ImportCredentials {
                     outbound_proxy_id: None,
                     settings: None,
@@ -371,4 +372,232 @@ async fn queue_should_reject_excess_work_before_starting_any_imports() {
         AdminErrorKind::RateLimited
     );
     assert!(recorded(&log).is_empty());
+}
+
+struct PoolStore(Vec<gateway_admin::model::mihomo::MihomoNode>);
+
+#[async_trait::async_trait]
+impl gateway_admin::ports::mihomo::MihomoStore for PoolStore {
+    async fn subscriptions(
+        &self,
+    ) -> gateway_admin::ports::store::AdminStoreResult<
+        Vec<gateway_admin::model::mihomo::MihomoSubscription>,
+    > {
+        Err(super::unavailable("unused subscription list"))
+    }
+    async fn subscription(
+        &self,
+        _: &str,
+    ) -> gateway_admin::ports::store::AdminStoreResult<
+        gateway_admin::model::mihomo::MihomoSubscription,
+    > {
+        Err(super::unavailable("unused subscription"))
+    }
+    async fn create(
+        &self,
+        _: gateway_admin::model::mihomo::NewMihomoSubscription,
+        _: Vec<gateway_admin::model::mihomo::MihomoNodeConfig>,
+        _: &MutationContext,
+    ) -> gateway_admin::ports::store::AdminStoreResult<
+        gateway_admin::model::mihomo::MihomoRefreshResult,
+    > {
+        Err(super::unavailable("unused subscription create"))
+    }
+    async fn update(
+        &self,
+        _: gateway_admin::model::mihomo::UpdateMihomoSubscription,
+        _: Option<Vec<gateway_admin::model::mihomo::MihomoNodeConfig>>,
+        _: &MutationContext,
+    ) -> gateway_admin::ports::store::AdminStoreResult<
+        gateway_admin::model::mihomo::MihomoRefreshResult,
+    > {
+        Err(super::unavailable("unused subscription update"))
+    }
+    async fn sync_nodes(
+        &self,
+        _: &str,
+        _: gateway_admin::model::Revision,
+        _: Vec<gateway_admin::model::mihomo::MihomoNodeConfig>,
+        _: &MutationContext,
+    ) -> gateway_admin::ports::store::AdminStoreResult<
+        gateway_admin::model::mihomo::MihomoRefreshResult,
+    > {
+        Err(super::unavailable("unused subscription sync"))
+    }
+    async fn delete(
+        &self,
+        _: &str,
+        _: gateway_admin::model::Revision,
+        _: &MutationContext,
+    ) -> gateway_admin::ports::store::AdminStoreResult<gateway_admin::model::Revision> {
+        Err(super::unavailable("unused subscription delete"))
+    }
+    async fn nodes(
+        &self,
+        query: gateway_admin::model::mihomo::MihomoNodeQuery,
+    ) -> gateway_admin::ports::store::AdminStoreResult<gateway_admin::model::mihomo::MihomoNodePage>
+    {
+        assert_eq!(query.subscription_id, "fixture-pool");
+        Ok(gateway_admin::model::mihomo::MihomoNodePage {
+            total: self.0.len() as u64,
+            items: self.0.clone(),
+            page: query.page,
+            page_size: query.page_size.get(),
+        })
+    }
+    async fn probe_targets(
+        &self,
+    ) -> gateway_admin::ports::store::AdminStoreResult<Vec<gateway_admin::model::proxies::TestProxy>>
+    {
+        Ok(Vec::new())
+    }
+    async fn runtime_snapshot(
+        &self,
+    ) -> gateway_admin::ports::store::AdminStoreResult<
+        gateway_admin::model::mihomo::MihomoRuntimeSnapshot,
+    > {
+        Ok(gateway_admin::model::mihomo::MihomoRuntimeSnapshot {
+            config_revision: gateway_admin::model::Revision::new(1).unwrap(),
+            nodes: Vec::new(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn pool_allocation_should_balance_existing_and_queued_accounts_before_latency() {
+    use gateway_admin::model::{
+        Revision,
+        mihomo::MihomoNode,
+        proxies::{DetectedProxyLocation, ProxyLocationDetection, ProxyRecord, ProxyTestResult},
+    };
+    use gateway_core::account::{OutboundProxy, RequestLocation};
+    let now = chrono::Utc::now();
+    let records: Vec<_> = [
+        ("a", 2, 10, true),
+        ("b", 0, 50, true),
+        ("c", 0, 10, true),
+        ("disabled", 0, 1, false),
+    ]
+    .into_iter()
+    .map(|(id, count, latency, enabled)| ProxyRecord {
+        id: id.to_owned(),
+        name: id.to_owned(),
+        revision: Revision::new(1).unwrap(),
+        proxy: OutboundProxy::parse("http://127.0.0.1:8080").unwrap(),
+        enabled,
+        managed: true,
+        available: true,
+        auto_location: true,
+        location: None,
+        detected_location: Some(DetectedProxyLocation {
+            location: RequestLocation::default(),
+            exit_ipv4: None,
+            exit_ipv6: None,
+            detected_at: now,
+        }),
+        account_count: count,
+        last_test_at: Some(now),
+        created_at: now,
+        updated_at: now,
+        last_test: Some(ProxyTestResult {
+            location: ProxyLocationDetection::Detected {
+                location: RequestLocation::default(),
+            },
+            success: true,
+            latency_ms: latency,
+            exit_ip: None,
+            exit_ipv4: None,
+            exit_ipv6: None,
+            message: "synthetic".to_owned(),
+        }),
+    })
+    .collect();
+    let nodes = records
+        .iter()
+        .map(|record| MihomoNode {
+            id: record.id.clone(),
+            proxy_id: record.id.clone(),
+            name: record.name.clone(),
+            kind: "ss".to_owned(),
+            available: true,
+            account_count: record.account_count,
+            endpoint: record.proxy.endpoint(),
+            proxy_revision: record.revision,
+            auto_location: true,
+            location: None,
+            detected_location: record.detected_location.clone(),
+            last_test: record.last_test.clone(),
+            last_test_at: record.last_test_at,
+        })
+        .collect();
+    let runtime = Arc::new(super::UnavailableMihomoRuntime);
+    let bundle = AdminHarness::new()
+        .provider(FakeProviderAdmin::new("openai", events()))
+        .mihomo(Arc::new(PoolStore(nodes)), runtime.clone(), runtime)
+        .proxies(Arc::new(super::proxies::TestProxies {
+            records,
+            ..Default::default()
+        }))
+        .build_bundle()
+        .await;
+    let services = bundle.services();
+    let first_id = Uuid::now_v7();
+    let first = services
+        .import_tasks()
+        .submit_in_pool(command(first_id, 3), "fixture-pool")
+        .await
+        .unwrap();
+    let first_detail = services
+        .import_tasks()
+        .detail(&context("poll"), first.task_id)
+        .unwrap();
+    assert_eq!(
+        first_detail
+            .items
+            .iter()
+            .map(|item| item.outbound_proxy_id.as_deref().unwrap())
+            .collect::<Vec<_>>(),
+        ["c", "b", "c"]
+    );
+    let second = services
+        .import_tasks()
+        .submit_in_pool(command(Uuid::now_v7(), 2), "fixture-pool")
+        .await
+        .unwrap();
+    let second_detail = services
+        .import_tasks()
+        .detail(&context("poll"), second.task_id)
+        .unwrap();
+    assert_eq!(
+        second_detail
+            .items
+            .iter()
+            .map(|item| item.outbound_proxy_id.as_deref().unwrap())
+            .collect::<Vec<_>>(),
+        ["b", "a"]
+    );
+    let retried = services
+        .import_tasks()
+        .submit_in_pool(command(first_id, 3), "fixture-pool")
+        .await
+        .unwrap();
+    assert_eq!(retried.task_id, first.task_id);
+    services
+        .import_tasks()
+        .stop(&context("stop"), first.task_id)
+        .unwrap();
+    services
+        .import_tasks()
+        .stop(&context("stop"), second.task_id)
+        .unwrap();
+    let after_stop = services
+        .import_tasks()
+        .submit_in_pool(command(Uuid::now_v7(), 1), "fixture-pool")
+        .await
+        .unwrap();
+    let detail = services
+        .import_tasks()
+        .detail(&context("poll"), after_stop.task_id)
+        .unwrap();
+    assert_eq!(detail.items[0].outbound_proxy_id.as_deref(), Some("c"));
 }

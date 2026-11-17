@@ -23,6 +23,7 @@ export interface AccountImportTask {
 export interface AccountImportTaskItem {
   index: number
   provider: string
+  outboundProxyId: string | null
   status: ImportItemStatus
   accountIds: string[]
   message: string | null
@@ -65,6 +66,7 @@ interface AccountImportTaskIdParam {
 
 interface CreateAccountImportTaskParam {
   submissionId: string
+  nodePoolId?: string
   items: AccountImportParam[]
 }
 

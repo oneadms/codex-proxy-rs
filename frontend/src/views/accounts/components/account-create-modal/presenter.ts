@@ -30,12 +30,16 @@ export function resolveAccountCreatePresentation(input: {
     description = t('accounts.onboarding.pasteAccessTokenLineByLineIf')
   else if (form.mode === 'refresh_token')
     description = t('accounts.onboarding.refreshTokenDescription')
+  else if (form.mode === 'protocol')
+    description = t('accounts.protocolLogin.description')
 
   let canSubmit = available && !input.busy
   if (form.mode === 'oauth')
     canSubmit &&= Boolean(authorization.flow && input.callback.trim())
   else if (form.mode !== 'api_key')
     canSubmit &&= Boolean(form.importTexts[form.mode].trim())
+  if (form.mode === 'protocol')
+    canSubmit &&= Boolean(form.nodePoolId.trim())
 
   return {
     configuring,

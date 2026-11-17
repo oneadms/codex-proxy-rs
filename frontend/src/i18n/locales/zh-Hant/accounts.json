@@ -1,5 +1,17 @@
 {
   "accounts": {
+    "protocolLogin": {
+      "label": "協定登入",
+      "description": "使用密碼與 2FA 批次登入並完成 Codex 授權",
+      "pool": "節點池",
+      "poolRequired": "請選擇節點池",
+      "allocation": "優先分配帳號較少、延遲較低的可用節點，並跟隨節點位置和時區",
+      "accounts": "帳號，每行 username----password----2fa",
+      "revokeNotice": "登入後會登出其他工作階段，僅保留本次工作階段，登入與授權全程使用同一節點",
+      "empty": "請至少輸入一個帳號",
+      "invalidLine": "第 {line} 行需按 username----password----2fa 填寫",
+      "duplicateLine": "第 {line} 行的使用者名稱重複"
+    },
     "quotaSettings": {
       "badge": "額度暫停",
       "title": "額度桶設定",

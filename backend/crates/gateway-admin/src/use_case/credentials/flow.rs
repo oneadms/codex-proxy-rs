@@ -63,9 +63,13 @@ impl ProviderCredentials {
         let outbound_proxy = proxy_reservation
             .as_ref()
             .map(|reservation| reservation.binding.clone());
+        let default_request_location = proxy_reservation
+            .as_ref()
+            .and_then(|reservation| reservation.request_location.clone());
         let prepared = self
             .provider
             .prepare_import(PrepareCredentialImport {
+                default_request_location,
                 default_outbound_proxy: outbound_proxy
                     .as_ref()
                     .map(|binding| binding.proxy.clone()),

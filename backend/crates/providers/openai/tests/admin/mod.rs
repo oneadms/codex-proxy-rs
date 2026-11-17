@@ -1,6 +1,7 @@
 //! 验证 OpenAI 管理能力、请求画像、Bundle 组装与额度投影
 
 mod peer_info;
+mod protocol_login;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroU32;
@@ -75,6 +76,7 @@ async fn plan_display_should_distinguish_pro_tiers_and_preserve_other_official_n
         config.config.clone(),
         provider_ports(),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+        crate::support::javascript_runtime(),
     )
     .await
     .unwrap();
@@ -115,6 +117,7 @@ async fn account_capabilities_distinguish_oauth_from_api_key_and_unknown_credent
         config.config.clone(),
         provider_ports(),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+        crate::support::javascript_runtime(),
     )
     .await
     .unwrap();
@@ -142,6 +145,7 @@ async fn custom_identity_preview_and_dashboard_share_the_exact_request_profile()
         config.config.clone(),
         provider_ports(),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+        crate::support::javascript_runtime(),
     )
     .await
     .unwrap();
@@ -174,6 +178,7 @@ async fn installation_seed_is_optional_and_validated_only_for_key_profiles() {
         valid_config().config,
         provider_ports(),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+        crate::support::javascript_runtime(),
     )
     .await
     .unwrap();
@@ -236,6 +241,7 @@ async fn openai_bundle_exposes_one_core_provider_and_drains_worker_contributions
         config.config.clone(),
         provider_ports(),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+        crate::support::javascript_runtime(),
     )
     .await
     .expect("OpenAI bundle");
@@ -315,6 +321,7 @@ async fn quota_forecast_observation_reuses_protocol_parser_and_keeps_window_iden
         config.config.clone(),
         provider_ports(),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+        crate::support::javascript_runtime(),
     )
     .await
     .unwrap();
@@ -417,6 +424,7 @@ async fn initialized_provider_keeps_thread_spawn_transport_conversations_distinc
         config.config.clone(),
         provider_ports_with(store, Arc::new(TestOAuthPending::default())),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+        crate::support::javascript_runtime(),
     )
     .await
     .expect("initialized OpenAI provider");
@@ -489,6 +497,7 @@ async fn copying_builtin_prices_keeps_cache_read_and_write_fallback_costs() {
         config.config.clone(),
         provider_ports(),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+        crate::support::javascript_runtime(),
     )
     .await
     .unwrap();
@@ -537,6 +546,7 @@ async fn openai_admin_provider_exposes_live_wire_profile_and_validated_billing()
         config.config.clone(),
         provider_ports(),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+        crate::support::javascript_runtime(),
     )
     .await
     .expect("OpenAI bundle");
@@ -625,6 +635,7 @@ async fn openai_legacy_billing_should_not_infer_long_context_flag() {
         config.config.clone(),
         provider_ports(),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+        crate::support::javascript_runtime(),
     )
     .await
     .expect("OpenAI bundle");
@@ -715,6 +726,7 @@ async fn openai_core_provider_projects_private_request_observation_without_execu
         config.config.clone(),
         provider_ports(),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+        crate::support::javascript_runtime(),
     )
     .await
     .expect("OpenAI bundle");
@@ -751,6 +763,7 @@ async fn openai_admin_provider_persists_the_full_pending_envelope_and_binds_owne
             Arc::clone(&pending),
         ),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+        crate::support::javascript_runtime(),
     )
     .await
     .expect("OpenAI bundle");
@@ -856,6 +869,7 @@ async fn oauth_connection_failures_preserve_safe_diagnostics_and_release_the_cla
             config.config.clone(),
             provider_ports_with(Arc::new(MemoryAccountStore::default()), pending.clone()),
             Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+            crate::support::javascript_runtime(),
         )
         .await
         .unwrap();
@@ -962,6 +976,7 @@ async fn openai_reauthorization_pending_payload_reuses_the_account_installation_
         config.config.clone(),
         provider_ports_with(accounts, Arc::clone(&pending)),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+        crate::support::javascript_runtime(),
     )
     .await
     .expect("OpenAI bundle");
@@ -1044,6 +1059,7 @@ async fn openai_admin_reads_a_full_quota_page_in_one_store_call() {
         config.config.clone(),
         provider_ports_with(Arc::clone(&store), Arc::new(TestOAuthPending::default())),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+        crate::support::javascript_runtime(),
     )
     .await
     .expect("OpenAI bundle");
@@ -1144,6 +1160,7 @@ async fn openai_admin_batch_quota_isolates_stale_and_invalid_observations() {
         config.config.clone(),
         provider_ports_with(Arc::clone(&store), Arc::new(TestOAuthPending::default())),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+        crate::support::javascript_runtime(),
     )
     .await
     .expect("OpenAI bundle");
@@ -1223,6 +1240,7 @@ async fn openai_admin_provider_projects_cached_quota_models_and_canonical_export
             catalog_cache,
         ),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+        crate::support::javascript_runtime(),
     )
     .await
     .expect("OpenAI bundle");
@@ -1327,6 +1345,7 @@ async fn openai_admin_quota_refresh_updates_the_account_plan() {
         config.config,
         provider_ports_with(store.clone(), Arc::new(TestOAuthPending::default())),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+        crate::support::javascript_runtime(),
     )
     .await
     .unwrap();
@@ -1369,6 +1388,7 @@ async fn openai_admin_quota_projects_credit_balance_from_refresh_and_cached_obse
         config.config,
         provider_ports_with(store.clone(), Arc::new(TestOAuthPending::default())),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+        crate::support::javascript_runtime(),
     )
     .await
     .unwrap();
@@ -1478,6 +1498,7 @@ async fn openai_admin_projects_free_plan_from_cached_quota_when_account_claims_o
         config.config.clone(),
         provider_ports_with(store, Arc::new(TestOAuthPending::default())),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+        crate::support::javascript_runtime(),
     )
     .await
     .expect("OpenAI bundle");
@@ -1580,6 +1601,7 @@ async fn openai_admin_provider_projects_official_codex_quota_and_independent_buc
         config.config.clone(),
         provider_ports_with(Arc::clone(&store), Arc::new(TestOAuthPending::default())),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+        crate::support::javascript_runtime(),
     )
     .await
     .expect("OpenAI bundle");
@@ -1703,6 +1725,7 @@ async fn openai_admin_keeps_confirmed_exhaustion_separate_from_raw_usage_display
         config.config.clone(),
         provider_ports_with(Arc::clone(&store), Arc::new(TestOAuthPending::default())),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+        crate::support::javascript_runtime(),
     )
     .await
     .expect("OpenAI bundle");
@@ -1818,6 +1841,7 @@ async fn openai_admin_preserves_expired_window_usage_and_exhaustion_attribution(
             config.config.clone(),
             provider_ports_with(Arc::clone(&store), Arc::new(TestOAuthPending::default())),
             Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+            crate::support::javascript_runtime(),
         )
         .await
         .expect("OpenAI bundle");
@@ -1898,6 +1922,7 @@ async fn openai_admin_provider_rejects_unprepared_mutations_before_store_commit(
         config.config.clone(),
         provider_ports_with(store, Arc::new(TestOAuthPending::default())),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+        crate::support::javascript_runtime(),
     )
     .await
     .expect("OpenAI bundle");
@@ -1905,6 +1930,7 @@ async fn openai_admin_provider_rejects_unprepared_mutations_before_store_commit(
     let import_error = admin
         .prepare_import(PrepareCredentialImport {
             default_outbound_proxy: None,
+            default_request_location: None,
             document: ProviderDocument::new(OpaqueProviderData::new(Map::new())),
         })
         .await
@@ -1944,6 +1970,7 @@ async fn initialized_provider_reports_a_safe_pat_format_error_before_network_acc
         config.config.clone(),
         provider_ports(),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+        crate::support::javascript_runtime(),
     )
     .await
     .expect("OpenAI bundle");
@@ -1951,6 +1978,7 @@ async fn initialized_provider_reports_a_safe_pat_format_error_before_network_acc
         .admin_provider()
         .prepare_import(PrepareCredentialImport {
             default_outbound_proxy: None,
+            default_request_location: None,
             document: ProviderDocument::new(OpaqueProviderData::new(Map::from_iter([(
                 "accessToken".to_owned(),
                 json!("at-sensitive-token with whitespace"),
@@ -1989,6 +2017,7 @@ async fn openai_rotation_preserves_the_new_access_token_jwt_expiration() {
         config.config.clone(),
         provider_ports_with(store, Arc::new(TestOAuthPending::default())),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+        crate::support::javascript_runtime(),
     )
     .await
     .expect("OpenAI bundle");
@@ -2048,6 +2077,7 @@ async fn reset_credit_admin(
         config.config.clone(),
         provider_ports_with(store, Arc::new(TestOAuthPending::default())),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+        crate::support::javascript_runtime(),
     )
     .await
     .expect("OpenAI reset-credit bundle");
@@ -2142,6 +2172,7 @@ pub(crate) async fn initialized_test_bundle(
         config.config.clone(),
         provider_ports_with(accounts, Arc::new(TestOAuthPending::default())),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+        crate::support::javascript_runtime(),
     )
     .await
     .expect("initialized provider")
@@ -2604,6 +2635,7 @@ mod errors {
             config.config,
             provider_ports_with(store.clone(), Arc::new(TestOAuthPending::default())),
             Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+            crate::support::javascript_runtime(),
         )
         .await
         .expect("OpenAI bundle");
@@ -2902,6 +2934,7 @@ mod errors {
             config.config,
             refresh_ports(store.clone(), false),
             Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+            crate::support::javascript_runtime(),
         )
         .await
         .unwrap();
@@ -2972,6 +3005,7 @@ mod errors {
             config.config.clone(),
             refresh_ports(store.clone(), busy),
             Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+            crate::support::javascript_runtime(),
         )
         .await
         .unwrap();
@@ -3044,6 +3078,7 @@ async fn api_key_admin_exposes_only_configuration_and_preserves_key_when_rotatin
         config.config.clone(),
         provider_ports_with(Arc::clone(&store), Arc::new(TestOAuthPending::default())),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+        crate::support::javascript_runtime(),
     )
     .await
     .unwrap();
@@ -3129,6 +3164,7 @@ async fn oauth_transport_settings_preserve_tokens_refresh_schedule_and_health() 
         config.config.clone(),
         provider_ports_with(Arc::clone(&store), Arc::new(TestOAuthPending::default())),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+        crate::support::javascript_runtime(),
     )
     .await
     .unwrap();
@@ -3228,6 +3264,7 @@ async fn usage_quote_reuses_native_override_and_reports_incomplete_input() {
         config.config.clone(),
         provider_ports(),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
+        crate::support::javascript_runtime(),
     )
     .await
     .unwrap();

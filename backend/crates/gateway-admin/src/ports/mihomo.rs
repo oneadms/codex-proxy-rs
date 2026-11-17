@@ -8,6 +8,7 @@ use crate::model::{
         MihomoNodeConfig, MihomoNodePage, MihomoNodeQuery, MihomoRefreshResult, MihomoRuntimeNode,
         MihomoRuntimeSnapshot, MihomoSubscription, NewMihomoSubscription, UpdateMihomoSubscription,
     },
+    proxies::TestProxy,
 };
 
 use super::store::AdminStoreResult;
@@ -42,6 +43,7 @@ pub trait MihomoStore: Send + Sync {
         context: &MutationContext,
     ) -> AdminStoreResult<Revision>;
     async fn nodes(&self, query: MihomoNodeQuery) -> AdminStoreResult<MihomoNodePage>;
+    async fn probe_targets(&self) -> AdminStoreResult<Vec<TestProxy>>;
     async fn runtime_snapshot(&self) -> AdminStoreResult<MihomoRuntimeSnapshot>;
 }
 

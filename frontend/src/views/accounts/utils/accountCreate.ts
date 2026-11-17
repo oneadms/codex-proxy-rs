@@ -5,8 +5,8 @@ import { accountSchedulingValues } from './schedulingForm'
 import { emptyApiKeyAccountForm } from './upstreamApiKey'
 
 export type AccountCreateSource = { kind: 'bundle' } | { kind: 'provider', id: string }
-export type AccountImportMode = 'oauth' | 'api_key' | 'access_token' | 'refresh_token' | 'json'
-type AccountImportInputMode = 'access_token' | 'refresh_token' | 'json'
+export type AccountImportMode = 'oauth' | 'api_key' | 'access_token' | 'refresh_token' | 'json' | 'protocol'
+type AccountImportInputMode = 'access_token' | 'refresh_token' | 'json' | 'protocol'
 
 export interface AccountCreateForm {
   name: string
@@ -23,6 +23,7 @@ export interface AccountCreateForm {
   importTexts: Record<AccountImportInputMode, string>
   proxyMode: string
   proxyId: string
+  nodePoolId: string
 }
 
 export function emptyAccountCreateForm(): AccountCreateForm {
@@ -37,9 +38,15 @@ export function emptyAccountCreateForm(): AccountCreateForm {
     groupIds: [],
     step: 'settings',
     mode: 'oauth',
-    importTexts: { access_token: '', refresh_token: '', json: '' },
+    importTexts: {
+      access_token: '',
+      refresh_token: '',
+      json: '',
+      protocol: '',
+    },
     proxyMode: 'deployment',
     proxyId: '',
+    nodePoolId: '',
   }
 }
 
@@ -80,6 +87,10 @@ export function accountImportModes(provider: string | undefined) {
   if (provider === 'openai') {
     return [
       { label: 'OAuth', value: 'oauth' as const },
+      {
+        label: t('accounts.protocolLogin.label'),
+        value: 'protocol' as const,
+      },
       {
         label: t('common.fields.apiKey'),
         value: 'api_key' as const,

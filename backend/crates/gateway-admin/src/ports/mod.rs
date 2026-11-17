@@ -2,6 +2,7 @@
 
 pub mod backup;
 pub mod client_distribution;
+pub mod javascript;
 pub mod mihomo;
 pub mod peer;
 pub mod plugin_accounts;

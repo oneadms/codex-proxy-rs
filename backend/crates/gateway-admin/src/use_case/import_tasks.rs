@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use async_trait::async_trait;
 use chrono::Utc;
 use futures::{FutureExt as _, StreamExt as _, future::BoxFuture, stream::FuturesUnordered};
 use gateway_core::task::{
@@ -30,8 +31,14 @@ const MAX_ACTIVE_TASKS: usize = 8;
 const MAX_RETAINED_TASKS: usize = 100;
 const RETENTION: Duration = Duration::from_secs(3600);
 
+#[async_trait]
 pub trait ImportTasksService: Send + Sync {
     fn submit(&self, command: SubmitImportTask) -> Result<ImportTaskSummary, AdminError>;
+    async fn submit_in_pool(
+        &self,
+        command: SubmitImportTask,
+        subscription_id: &str,
+    ) -> Result<ImportTaskSummary, AdminError>;
     fn list(&self, context: &MutationContext) -> Vec<ImportTaskSummary>;
     fn detail(
         &self,
@@ -130,14 +137,27 @@ pub(crate) struct DefaultImportTasksService {
     registry: Mutex<Registry>,
     notify: Notify,
     credentials: Arc<CredentialsService>,
+    mihomo: Arc<dyn crate::ports::mihomo::MihomoStore>,
+    proxies: Arc<dyn crate::ports::proxy::ProxyStore>,
+    proxy_service: Arc<dyn super::proxies::ProxiesService>,
+    allocation: tokio::sync::Mutex<()>,
 }
 
 impl DefaultImportTasksService {
-    pub(crate) fn new(credentials: Arc<CredentialsService>) -> Arc<Self> {
+    pub(crate) fn new(
+        credentials: Arc<CredentialsService>,
+        mihomo: Arc<dyn crate::ports::mihomo::MihomoStore>,
+        proxies: Arc<dyn crate::ports::proxy::ProxyStore>,
+        proxy_service: Arc<dyn super::proxies::ProxiesService>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             registry: Mutex::default(),
             notify: Notify::new(),
             credentials,
+            mihomo,
+            proxies,
+            proxy_service,
+            allocation: tokio::sync::Mutex::new(()),
         })
     }
 
@@ -175,6 +195,54 @@ impl DefaultImportTasksService {
 
     async fn execute(&self, id: Uuid, index: usize, input: ImportTaskInput) {
         let operation = async {
+            if input.follow_proxy_location
+                && let Some(proxy_id) = &input.command.outbound_proxy_id
+            {
+                let current = self
+                    .proxies
+                    .get(proxy_id)
+                    .await
+                    .map_err(|error| super::map_store_error(error, "import proxy location"))?;
+                if !current.enabled || !current.available {
+                    return Err(AdminError::invalid("导入节点已禁用或不可用"));
+                }
+                if !current.auto_location {
+                    let updated = self
+                        .proxy_service
+                        .update(
+                            crate::model::proxies::UpdateProxy {
+                                id: current.id,
+                                revision: current.revision,
+                                name: current.name,
+                                auto_location: Some(true),
+                                enabled: None,
+                                max_websocket_connections: None,
+                                location: None,
+                                proxy: None,
+                                test: None,
+                            },
+                            &input.command.context,
+                        )
+                        .await;
+                    if let Err(error) = updated {
+                        if error.kind() != AdminErrorKind::Conflict {
+                            return Err(error);
+                        }
+                        // 同节点的另一条目可能已完成设置并开始登录，只复用相同出口的有效位置
+                        let latest = self.proxies.get(proxy_id).await.map_err(|error| {
+                            super::map_store_error(error, "import proxy location")
+                        })?;
+                        if !latest.enabled
+                            || !latest.available
+                            || !latest.auto_location
+                            || latest.proxy != current.proxy
+                            || latest.effective_location().is_none()
+                        {
+                            return Err(error);
+                        }
+                    }
+                }
+            }
             self.credentials
                 .for_provider(&input.provider)?
                 .import_document(input.command)
@@ -214,7 +282,129 @@ impl DefaultImportTasksService {
     }
 }
 
+#[async_trait]
 impl ImportTasksService for DefaultImportTasksService {
+    async fn submit_in_pool(
+        &self,
+        mut command: SubmitImportTask,
+        subscription_id: &str,
+    ) -> Result<ImportTaskSummary, AdminError> {
+        use crate::model::{
+            PageSize,
+            mihomo::{MihomoNodeQuery, MihomoNodeSort},
+        };
+        if subscription_id.is_empty()
+            || subscription_id.len() > 128
+            || subscription_id.chars().any(char::is_control)
+            || command.items.is_empty()
+            || command.items.len() > MAX_IMPORT_TASK_ITEMS
+            || command.items.iter().any(|item| {
+                item.command.outbound_proxy_id.is_some()
+                    || self.credentials.for_provider(&item.provider).is_err()
+                    || item.command.context.actor != command.context.actor
+            })
+        {
+            return Err(AdminError::invalid(
+                "节点池导入需指定订阅，且不能同时指定单个代理",
+            ));
+        }
+        // 排序与预留在同一临界区完成，已排队但尚未入库的账号也参与均衡
+        let _allocation = self.allocation.lock().await;
+        {
+            let registry = self.registry();
+            if let Some(existing) = registry.tasks.iter().find(|entry| {
+                entry.owner == command.context.actor && entry.submission_id == command.submission_id
+            }) {
+                return if existing.fingerprint == command.fingerprint {
+                    Ok(existing.summary())
+                } else {
+                    Err(AdminError::conflict("提交标识已用于其他导入内容"))
+                };
+            }
+        }
+        let mut nodes = Vec::new();
+        let mut page = 1;
+        loop {
+            let result = self
+                .mihomo
+                .nodes(MihomoNodeQuery {
+                    subscription_id: subscription_id.to_owned(),
+                    page,
+                    page_size: PageSize::new(200)
+                        .map_err(|_| AdminError::internal("节点池页大小不合法"))?,
+                    search: String::new(),
+                    sort: MihomoNodeSort::LatencyAsc,
+                })
+                .await
+                .map_err(|error| super::map_store_error(error, "import node pool"))?;
+            let end = u64::from(page) * 200 >= result.total;
+            nodes.extend(result.items.into_iter().filter(|node| {
+                node.available
+                    && node.last_test.as_ref().is_some_and(|test| test.success)
+                    && node.detected_location.is_some()
+            }));
+            if end {
+                break;
+            }
+            page += 1;
+        }
+        let pending = {
+            let registry = self.registry();
+            let mut pending = std::collections::HashMap::<String, u64>::new();
+            for item in registry.tasks.iter().flat_map(|entry| &entry.items) {
+                if matches!(
+                    item.status,
+                    ImportItemStatus::Pending | ImportItemStatus::Running
+                ) && let Some(id) = &item.outbound_proxy_id
+                {
+                    *pending.entry(id.clone()).or_default() += 1;
+                }
+            }
+            pending
+        };
+        for node in &mut nodes {
+            node.account_count += pending.get(&node.proxy_id).copied().unwrap_or_default();
+        }
+        for input in &mut command.items {
+            loop {
+                nodes.sort_by(|left, right| {
+                    left.account_count
+                        .cmp(&right.account_count)
+                        .then_with(|| {
+                            left.last_test
+                                .as_ref()
+                                .map(|test| test.latency_ms)
+                                .cmp(&right.last_test.as_ref().map(|test| test.latency_ms))
+                        })
+                        .then_with(|| left.id.cmp(&right.id))
+                });
+                let Some(node) = nodes.first_mut() else {
+                    return Err(AdminError::invalid(
+                        "节点池没有已测通且已识别位置的可用节点",
+                    ));
+                };
+                let current = self
+                    .proxies
+                    .get(&node.proxy_id)
+                    .await
+                    .map_err(|error| super::map_store_error(error, "import node proxy"))?;
+                if !current.enabled
+                    || !current.available
+                    || !current.last_test.as_ref().is_some_and(|test| test.success)
+                    || current.detected_location.is_none()
+                {
+                    nodes.remove(0);
+                    continue;
+                }
+                input.command.outbound_proxy_id = Some(node.proxy_id.clone());
+                input.follow_proxy_location = true;
+                node.account_count += 1;
+                break;
+            }
+        }
+        self.submit(command)
+    }
+
     fn submit(&self, command: SubmitImportTask) -> Result<ImportTaskSummary, AdminError> {
         if command.items.is_empty()
             || command.items.len() > MAX_IMPORT_TASK_ITEMS
@@ -264,6 +454,7 @@ impl ImportTasksService for DefaultImportTasksService {
             .map(|(index, input)| ImportTaskItem {
                 index: index + 1,
                 provider: input.provider.clone(),
+                outbound_proxy_id: input.command.outbound_proxy_id.clone(),
                 status: ImportItemStatus::Pending,
                 account_ids: Vec::new(),
                 message: None,

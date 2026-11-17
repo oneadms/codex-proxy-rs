@@ -49,6 +49,7 @@ impl ProxyStore for TestProxies {
             .ok_or_else(|| super::unavailable("proxy"))?;
         events.lock().unwrap().push("proxy.reserve");
         Ok(gateway_admin::ports::proxy::ProxyImportReservation {
+            request_location: None,
             binding: ImportProxyBinding {
                 id: id.to_owned(),
                 proxy: OutboundProxy::parse("http://127.0.0.1:8080").unwrap(),

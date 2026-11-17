@@ -2,9 +2,13 @@
 
 use chrono::{DateTime, Utc};
 use secrecy::SecretString;
+use serde::Deserialize;
 use serde_json::Value;
 
-use super::{PageSize, Revision};
+use super::{
+    PageSize, Revision,
+    proxies::{DetectedProxyLocation, ProxyTestResult},
+};
 
 #[derive(Debug, Clone)]
 pub struct MihomoSubscription {
@@ -81,6 +85,21 @@ pub struct MihomoNode {
     pub available: bool,
     pub account_count: u64,
     pub endpoint: String,
+    pub proxy_revision: Revision,
+    pub auto_location: bool,
+    pub location: Option<gateway_core::account::RequestLocation>,
+    pub detected_location: Option<DetectedProxyLocation>,
+    pub last_test: Option<ProxyTestResult>,
+    pub last_test_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Default, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MihomoNodeSort {
+    #[default]
+    Name,
+    LatencyAsc,
+    LatencyDesc,
 }
 
 #[derive(Debug, Clone)]
@@ -89,6 +108,7 @@ pub struct MihomoNodeQuery {
     pub page: u32,
     pub page_size: PageSize,
     pub search: String,
+    pub sort: MihomoNodeSort,
 }
 
 #[derive(Debug, Clone)]

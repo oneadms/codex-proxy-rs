@@ -11,6 +11,8 @@ pub const MAX_IMPORT_TASK_ITEMS: usize = 200;
 #[derive(Debug)]
 pub struct ImportTaskInput {
     pub provider: ProviderKind,
+    /// 节点池分配的条目在执行时启用位置跟随，不阻塞任务提交
+    pub follow_proxy_location: bool,
     pub command: ImportCredentials,
 }
 
@@ -51,6 +53,7 @@ impl ImportItemStatus {
 pub struct ImportTaskItem {
     pub index: usize,
     pub provider: ProviderKind,
+    pub outbound_proxy_id: Option<String>,
     pub status: ImportItemStatus,
     pub account_ids: Vec<ProviderAccountId>,
     pub message: Option<String>,

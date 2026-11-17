@@ -9,6 +9,7 @@ mod cookie;
 mod eligibility;
 mod oauth;
 mod profile_statistics;
+mod protocol_login;
 mod quota;
 mod recovery_log;
 mod refresh;
@@ -27,6 +28,7 @@ pub(crate) use affinity::{
 };
 pub(crate) use eligibility::CodexSelectionModel;
 pub(crate) use oauth::oauth_owner_ref;
+pub(crate) use protocol_login::prepare_protocol_login;
 pub(crate) use types::parse_access_token_expiration;
 
 pub(crate) use crate::CODEX_AUTHENTICATION_KIND_API_KEY;

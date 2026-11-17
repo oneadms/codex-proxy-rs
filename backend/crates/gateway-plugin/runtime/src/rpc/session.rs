@@ -132,6 +132,8 @@ impl RpcSession {
         let process = loop {
             match processes.spawn(ProcessSpec {
                 executable: package.executable().to_owned(),
+                arguments: Vec::new(),
+                environment: Vec::new(),
                 directory: package.directory().to_owned(),
                 maximum_stderr_bytes: limits.maximum_stderr_bytes,
             }) {

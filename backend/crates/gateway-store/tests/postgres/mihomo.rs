@@ -446,6 +446,7 @@ fn query(subscription_id: &str) -> MihomoNodeQuery {
         page: 1,
         page_size: PageSize::new(20).unwrap(),
         search: String::new(),
+        sort: Default::default(),
     }
 }
 

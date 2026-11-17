@@ -47,7 +47,8 @@ impl MihomoHost {
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
-            .user_agent("codex-proxy-rs-mihomo")
+            // 订阅服务按 Clash/Mihomo 客户端标识协商 YAML 格式
+            .user_agent("clash.meta")
             .build()
             .map_err(|_| MihomoError::unavailable("无法创建 Mihomo 订阅读取客户端"))?;
         Ok(Self {

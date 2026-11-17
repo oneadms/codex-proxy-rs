@@ -16,6 +16,7 @@ pub(super) enum Mode {
 }
 
 pub(super) struct Environment {
+    pub(super) javascript: Arc<dyn gateway_admin::ports::javascript::JavaScriptRuntime>,
     pub(super) host: HostBundle,
     pub(super) store: StoreBundle,
     pub(super) timezone: DeploymentTimeZone,
@@ -31,6 +32,11 @@ impl Environment {
         mode: Mode,
     ) -> Result<Self, BootstrapError> {
         let timezone = host.timezone;
+        let javascript = Arc::new(gateway_host::process::NodeJavaScriptRuntime::new(
+            host.javascript.clone(),
+            host.runtime_data_dir().to_path_buf(),
+            Arc::new(gateway_host::process::ProcessSupervisor::default()),
+        ));
         let store = store.with_timezone(timezone);
         let plugin_cache = host.runtime_data_dir().join("plugins");
         // 插件兼容检查只需本地运行版本，管理端版本查询还会等待远端发行服务
@@ -48,6 +54,7 @@ impl Environment {
         host.report_startup_ready("Store");
         let plugin_http = Arc::new(HttpClient::new()?);
         Ok(Self {
+            javascript,
             host,
             store,
             timezone,
@@ -77,6 +84,7 @@ impl Providers {
             config.with_timezone(environment.timezone),
             ports.clone(),
             upstream_reader.clone(),
+            environment.javascript.clone(),
         )
         .await?;
         environment.host.report_startup_ready("OpenAI Provider");

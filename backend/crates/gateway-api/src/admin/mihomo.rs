@@ -10,7 +10,7 @@ use axum::{
 use gateway_admin::model::{
     PageSize, Revision,
     mihomo::{
-        MihomoNode, MihomoNodeQuery, MihomoSubscription, NewMihomoSubscription,
+        MihomoNode, MihomoNodeQuery, MihomoNodeSort, MihomoSubscription, NewMihomoSubscription,
         UpdateMihomoSubscription,
     },
 };
@@ -51,6 +51,7 @@ struct NodeListQuery {
     page: Option<u32>,
     page_size: Option<u16>,
     search: Option<String>,
+    sort: Option<MihomoNodeSort>,
 }
 
 #[derive(Serialize)]
@@ -90,10 +91,17 @@ struct NodeView {
     available: bool,
     account_count: u64,
     endpoint: String,
+    proxy_revision: u64,
+    auto_location: bool,
+    location: Option<gateway_core::account::RequestLocation>,
+    detected_location: Option<gateway_admin::model::proxies::DetectedProxyLocation>,
+    last_test: Option<super::proxies::ProxyTestView>,
+    last_test_at: Option<String>,
+    last_test_at_display: Option<String>,
 }
 
-impl From<MihomoNode> for NodeView {
-    fn from(node: MihomoNode) -> Self {
+impl From<(MihomoNode, crate::time::TimePresenter)> for NodeView {
+    fn from((node, time): (MihomoNode, crate::time::TimePresenter)) -> Self {
         Self {
             id: node.id,
             proxy_id: node.proxy_id,
@@ -102,6 +110,13 @@ impl From<MihomoNode> for NodeView {
             available: node.available,
             account_count: node.account_count,
             endpoint: node.endpoint,
+            proxy_revision: node.proxy_revision.get(),
+            auto_location: node.auto_location,
+            location: node.location,
+            detected_location: node.detected_location,
+            last_test: node.last_test.map(Into::into),
+            last_test_at_display: node.last_test_at.as_ref().map(|at| time.datetime(at)),
+            last_test_at: node.last_test_at.map(|at| at.to_rfc3339()),
         }
     }
 }
@@ -324,14 +339,20 @@ where
             page_size: PageSize::new(query.page_size.unwrap_or(20))
                 .map_err(|_| AdminError::bad_request("分页大小不合法"))?,
             search: query.search.unwrap_or_default().trim().to_owned(),
+            sort: query.sort.unwrap_or_default(),
         })
         .await
         .map_err(map_error)?;
     let total_pages = result.total.div_ceil(u64::from(result.page_size));
+    let time = crate::time::TimePresenter::new(state.admin_services().timezone());
     Ok(AdminResponse::new(
         StatusCode::OK,
         AdminEnvelope::ok(NodePageView {
-            items: result.items.into_iter().map(Into::into).collect(),
+            items: result
+                .items
+                .into_iter()
+                .map(|node| NodeView::from((node, time)))
+                .collect(),
             page: PageMeta::new(
                 result.page,
                 u32::from(result.page_size),

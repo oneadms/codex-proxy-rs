@@ -1,4 +1,5 @@
 import type { RequestOptions } from '../request'
+import type { OutboundProxyRecord } from './proxies'
 import request from '../request'
 
 export interface MihomoSubscription {
@@ -11,7 +12,9 @@ export interface MihomoSubscription {
   updatedAtDisplay: string
 }
 
-export interface MihomoNode {
+export type MihomoNodeSort = 'name' | 'latencyAsc' | 'latencyDesc'
+
+export interface MihomoNode extends Pick<OutboundProxyRecord, 'autoLocation' | 'location' | 'detectedLocation' | 'lastTest' | 'lastTestAt' | 'lastTestAtDisplay'> {
   id: string
   proxyId: string
   name: string
@@ -19,6 +22,7 @@ export interface MihomoNode {
   available: boolean
   accountCount: number
   endpoint: string
+  proxyRevision: number
 }
 
 interface MihomoSubscriptionPage {
@@ -87,7 +91,7 @@ export function deleteMihomoSubscription(data: MihomoSubscriptionRevision) {
   })
 }
 
-export function getMihomoNodes(data: { subscriptionId: string, page: number, pageSize: number, search?: string }, options: RequestOptions = {}) {
+export function getMihomoNodes(data: { subscriptionId: string, page: number, pageSize: number, search?: string, sort?: MihomoNodeSort }, options: RequestOptions = {}) {
   return request<MihomoNodePage>({
     url: '/api/admin/mihomo/nodes',
     method: 'GET',

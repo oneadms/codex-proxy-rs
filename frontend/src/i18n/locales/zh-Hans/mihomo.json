@@ -1,7 +1,7 @@
 {
   "mihomo": {
     "page": {
-      "description": "管理 Mihomo 订阅与固定节点出口",
+      "description": "管理订阅与固定出口，节点位置和延迟自动更新",
       "subscriptions": "订阅",
       "nodes": "节点",
       "emptySubscriptions": "暂无 Mihomo 订阅",
@@ -12,7 +12,8 @@
       "available": "可用",
       "unavailable": "不可用",
       "notSelected": "选择订阅查看节点",
-      "viewAccounts": "查看 {name} 的 {count} 个绑定账号"
+      "viewAccounts": "查看 {name} 的 {count} 个绑定账号",
+      "testProgress": "已处理 {completed} / {total} 个节点"
     },
     "columns": {
       "subscriptionName": "订阅名称",
@@ -23,7 +24,10 @@
       "endpoint": "出口",
       "availability": "状态",
       "accounts": "绑定账号",
-      "updatedAt": "更新时间"
+      "updatedAt": "更新时间",
+      "region": "出口位置",
+      "latency": "延迟",
+      "testedAt": "最近探测"
     },
     "actions": {
       "create": "添加订阅",
@@ -35,7 +39,20 @@
       "deleteDescription": "解除节点关联后才能删除订阅“{name}”",
       "saved": "订阅已保存",
       "refreshed": "订阅已刷新",
-      "deleted": "订阅已删除"
+      "deleted": "订阅已删除",
+      "detectLocation": "探测位置",
+      "testLatency": "测试延迟",
+      "detectAllLocations": "探测全部位置",
+      "testAllLatency": "测试全部延迟",
+      "stopTesting": "停止测试",
+      "nodeTested": "{name} 探测完成，延迟 {latencyMs} ms",
+      "testsCompleted": "连通 {succeeded} 个，未完成 {failed} 个，位置待确认 {locationsPending} 个"
+    },
+    "sort": {
+      "label": "节点排序",
+      "name": "按名称排序",
+      "latencyAsc": "延迟从低到高",
+      "latencyDesc": "延迟从高到低"
     },
     "editor": {
       "createTitle": "添加 Mihomo 订阅",

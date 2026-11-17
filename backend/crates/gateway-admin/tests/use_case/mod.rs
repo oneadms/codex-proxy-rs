@@ -556,6 +556,12 @@ impl MihomoStore for UnavailableMihomoStore {
             nodes: Vec::new(),
         })
     }
+
+    async fn probe_targets(
+        &self,
+    ) -> AdminStoreResult<Vec<gateway_admin::model::proxies::TestProxy>> {
+        Ok(Vec::new())
+    }
 }
 
 struct UnavailableClientKeyVerifier;

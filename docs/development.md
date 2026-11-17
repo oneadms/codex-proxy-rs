@@ -29,6 +29,8 @@ pnpm --dir frontend install --frozen-lockfile
 
 前端依赖、锁文件与 ESLint 配置由 `frontend/` 管理，根目录不维护 Node 包
 
+OpenAI 协议登录与 Host 脚本进程测试需要 Node。动态运行时源码及内嵌资源的更新方式见[运行时维护](../backend/crates/providers/openai/runtime/protocol-login/README.md)
+
 - **版本固定**：`@codex-proxy/ui` 使用固定 GitHub 标签或提交，锁文件记录实际提交、源码归档地址及完整性摘要
 - **安装与构建**：pnpm 按 UI 自身锁文件准备依赖，执行 `prepack` 生成 JS、CSS 和类型声明，普通 `dev`、`build`、发行 CI 和 Docker 使用编译产物，无需初始化子模块
 - **构建许可**：`frontend/pnpm-workspace.yaml` 的 `allowBuilds` 按仓库放行自有 UI 包脚本，升级时核对源码并更新锁文件，无需逐次修改许可，不开放全部依赖脚本

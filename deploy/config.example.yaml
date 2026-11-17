@@ -17,6 +17,9 @@ host:
   # OpenAI 会话身份、系统更新状态和备份暂存区的统一根目录。
   # 相对路径以 deploy/config.yaml 所在目录为基准。
   runtime_data_dir: '../.runtime/data'
+  # 协议登录的动态安全验证使用 Node.js
+  javascript:
+    executable: 'node'
   logging:
     level: 'info'
     stdout: true

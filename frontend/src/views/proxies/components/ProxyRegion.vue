@@ -6,7 +6,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { countryFlagUrl, countryName, proxyExitLocation } from '../utils/location'
 
-const props = defineProps<{ proxy: OutboundProxyRecord }>()
+const props = defineProps<{ proxy: Pick<OutboundProxyRecord, 'autoLocation' | 'location' | 'detectedLocation' | 'lastTest'> }>()
 
 const { t } = useI18n({ useScope: 'global' })
 

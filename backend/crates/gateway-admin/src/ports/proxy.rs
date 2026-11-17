@@ -66,6 +66,7 @@ pub trait ProxyImportGuard: Send + Sync {}
 
 pub struct ProxyImportReservation {
     pub binding: ImportProxyBinding,
+    pub request_location: Option<gateway_core::account::RequestLocation>,
     pub guard: Box<dyn ProxyImportGuard>,
 }
 

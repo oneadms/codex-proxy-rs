@@ -1,5 +1,7 @@
 //! 验证真实子进程的启动、停止、回收与容量释放
 
+mod javascript;
+
 #[cfg(unix)]
 use gateway_host::process::{ProcessExit, ProcessSpec, ProcessStartError, ProcessSupervisor};
 
@@ -9,6 +11,8 @@ fn worker(directory: &std::path::Path, mode: &str) -> ProcessSpec {
     std::fs::write(directory.join("mode"), mode).unwrap();
     ProcessSpec {
         executable,
+        arguments: Vec::new(),
+        environment: Vec::new(),
         directory: directory.to_owned(),
         maximum_stderr_bytes: 128,
     }

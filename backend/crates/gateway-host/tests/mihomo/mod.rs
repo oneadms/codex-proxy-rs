@@ -50,12 +50,21 @@ async fn connects(port: u16) -> bool {
 }
 
 #[tokio::test]
-async fn subscription_fetch_keeps_node_config_and_ignores_source_rules_and_listeners() {
+async fn subscription_fetch_negotiates_yaml_and_keeps_only_node_config() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(
-            "proxies:\n  - name: edge\n    type: socks5\n    server: edge.example\n    port: 1080\n    password: node-secret\nlisteners:\n  - type: mixed\n    port: 10000\nrules:\n  - MATCH,DIRECT\n",
-        ))
+        .respond_with(|request: &wiremock::Request| {
+            let body = if request
+                .headers
+                .get("user-agent")
+                .is_some_and(|value| value == "clash.meta")
+            {
+                "proxies:\n  - name: edge\n    type: socks5\n    server: edge.example\n    port: 1080\n    password: node-secret\nlisteners:\n  - type: mixed\n    port: 10000\nrules:\n  - MATCH,DIRECT\n"
+            } else {
+                "c3M6Ly9ZV1Z6TFRFeU9DMW5ZMjA2Ym05a1pTMXpaV055WlhSQVpXUm5aUzVsZUdGdGNHeGxPakV3T0RBI2VkZ2U="
+            };
+            ResponseTemplate::new(200).set_body_string(body)
+        })
         .mount(&server)
         .await;
 

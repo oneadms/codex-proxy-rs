@@ -407,6 +407,19 @@ mihomo:
 
 Mihomo 运行配置位于 `host.runtime_data_dir` 下的 `mihomo` 目录，默认是 `.runtime/data/mihomo`，包含节点凭据，按敏感数据保护。每个节点只在应用环境的 `127.0.0.1` 上提供代理监听，不要将节点监听端口发布到公网；账号绑定与授权出口见 [Mihomo 订阅池 API](../docs/api.md#mihomo-订阅池)
 
+### 协议登录运行时
+
+协议登录的动态安全验证需要 Node.js 24 或更高版本，应用镜像已内置 Node。二进制部署需将 `node` 加入应用进程的 `PATH`，也可指定可执行文件：
+
+```yaml
+host:
+  javascript:
+    executable: 'C:\Program Files\nodejs\node.exe'
+```
+
+带路径的相对值以 `deploy/config.yaml` 所在目录为基准。运行时依赖已内嵌，无需在部署环境执行 npm 安装。
+每次验证使用独立的脚本进程和账号时区，网络请求由账号绑定的代理客户端发送；SDK 要求无法自动完成的安全验证时，当前导入条目失败，不直连或更换节点重试
+
 ### 启动后的运行设置
 
 在管理端修改以下设置，保存后对新请求生效，重启不会覆盖已保存的选择：

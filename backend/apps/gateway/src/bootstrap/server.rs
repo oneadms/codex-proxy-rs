@@ -16,6 +16,7 @@ pub async fn run() -> Result<(), BootstrapError> {
     let environment = Environment::initialize(config.host, config.store, Mode::Server).await?;
     let mut providers = Providers::initialize(config.openai, &environment).await?;
     let Environment {
+        javascript: _,
         host,
         mut store,
         timezone,

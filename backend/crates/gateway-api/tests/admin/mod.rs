@@ -2117,6 +2117,12 @@ impl MihomoStore for UnusedStore {
             nodes: Vec::new(),
         })
     }
+
+    async fn probe_targets(
+        &self,
+    ) -> AdminStoreResult<Vec<gateway_admin::model::proxies::TestProxy>> {
+        Ok(Vec::new())
+    }
 }
 
 #[async_trait]

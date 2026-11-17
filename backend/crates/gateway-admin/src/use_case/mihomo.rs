@@ -1,5 +1,7 @@
 //! Mihomo 订阅同步、运行配置发布与稳定节点入口管理
 
+mod probe;
+
 use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
@@ -106,6 +108,17 @@ impl DefaultMihomoService {
     async fn reconcile_runtime(&self) -> Result<(), AdminError> {
         let mut published_revision = self.mutations.lock().await;
         self.reconcile_runtime_locked(&mut published_revision).await
+    }
+
+    async fn probe_targets(&self) -> Result<Vec<crate::model::proxies::TestProxy>, AdminError> {
+        let mut published_revision = self.mutations.lock().await;
+        // 确认监听已恢复后才取探测名单，探测阶段不占用订阅写锁
+        self.reconcile_runtime_locked(&mut published_revision)
+            .await?;
+        self.store
+            .probe_targets()
+            .await
+            .map_err(|error| map_store_error(error, "mihomo probe"))
     }
 
     async fn fetch_and_validate(&self, url: &str) -> Result<Vec<MihomoNodeConfig>, AdminError> {

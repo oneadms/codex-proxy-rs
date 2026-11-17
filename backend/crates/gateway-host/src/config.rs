@@ -78,6 +78,8 @@ pub struct HostConfig {
     pub timezone: gateway_core::time::DeploymentTimeZone,
     pub listen: ListenConfig,
     pub runtime_data_dir: PathBuf,
+    #[serde(default)]
+    pub javascript: crate::process::JavaScriptConfig,
     pub logging: LoggingConfig,
     #[serde(default)]
     pub system_update: SystemUpdateConfig,
@@ -117,6 +119,7 @@ impl HostConfig {
             return Err(ConfigError::InvalidField("host.runtime_data_dir"));
         }
         resolve_relative_path(source_dir, &mut self.runtime_data_dir);
+        self.javascript.resolve_and_validate(source_dir)?;
         self.logging.resolve_and_validate(source_dir)?;
         self.system_update.resolve_and_validate(
             source_dir,

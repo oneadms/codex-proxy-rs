@@ -120,7 +120,7 @@ fn invalid() -> StoreError {
     }
 }
 
-fn record(row: PgRow) -> StoreResult<ProxyRecord> {
+pub(super) fn record(row: PgRow) -> StoreResult<ProxyRecord> {
     let success: Option<bool> = row
         .try_get("last_test_success")
         .map_err(|source| invalid().with_source(source))?;
@@ -643,6 +643,7 @@ impl ProxyStore for PgProxyRepository {
             }
         };
         Ok(ProxyImportReservation {
+            request_location: record.effective_location().cloned(),
             binding: ImportProxyBinding {
                 id: record.id,
                 proxy: record.proxy,

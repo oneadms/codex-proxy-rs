@@ -20,6 +20,7 @@ import AccountIdentityCell from '../AccountIdentityCell.vue'
 import AccountNameField from '../AccountNameField.vue'
 import AccountImportFields from './AccountImportFields.vue'
 import AccountOAuthFields from './AccountOAuthFields.vue'
+import AccountProtocolFields from './AccountProtocolFields.vue'
 import AccountSetupFields from './AccountSetupFields.vue'
 import { resolveAccountCreatePresentation } from './presenter'
 
@@ -189,6 +190,12 @@ async function requestCreate() {
           <AccountNameField v-model="form.name" required :disabled="busy" :placeholder="t('accounts.credentials.enterUpstreamName')" />
           <AccountApiKeyFields v-model="form.apiKey" :disabled="busy" />
         </ZForm>
+        <AccountProtocolFields
+          v-else-if="mode === 'protocol'"
+          v-model="form.importTexts.protocol"
+          v-model:node-pool-id="form.nodePoolId"
+          :disabled="busy"
+        />
         <AccountImportFields
           v-else
           :key="mode"

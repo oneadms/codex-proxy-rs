@@ -27,6 +27,7 @@ where
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SubmitRequest {
     submission_id: String,
+    node_pool_id: Option<String>,
     items: Vec<AccountImportRequest>,
 }
 
@@ -99,6 +100,7 @@ struct DetailView {
 struct ItemView {
     index: usize,
     provider: String,
+    outbound_proxy_id: Option<String>,
     status: &'static str,
     account_ids: Vec<String>,
     message: Option<String>,
@@ -114,6 +116,7 @@ impl From<(ImportTaskDetail, crate::time::TimePresenter)> for DetailView {
                 .map(|item| ItemView {
                     index: item.index,
                     provider: item.provider.to_string(),
+                    outbound_proxy_id: item.outbound_proxy_id,
                     status: item.status.as_str(),
                     account_ids: item
                         .account_ids
@@ -149,7 +152,7 @@ where
     if request.items.is_empty() || request.items.len() > MAX_IMPORT_TASK_ITEMS {
         return Err(map_wire_error(WireValidationError::new("items")));
     }
-    let encoded = serde_json::to_vec(&request.items)
+    let encoded = serde_json::to_vec(&(&request.node_pool_id, &request.items))
         .map_err(|_| map_wire_error(WireValidationError::new("items")))?;
     let fingerprint = Sha256::digest(&encoded).into();
     drop(encoded);
@@ -159,20 +162,26 @@ where
         .into_iter()
         .map(|item| {
             let (provider, command) = item.into_command(context.clone())?;
-            Ok(ImportTaskInput { provider, command })
+            Ok(ImportTaskInput {
+                provider,
+                follow_proxy_location: false,
+                command,
+            })
         })
         .collect::<Result<Vec<_>, WireValidationError>>()
         .map_err(map_wire_error)?;
-    let task = state
-        .admin_services()
-        .import_tasks()
-        .submit(SubmitImportTask {
-            submission_id,
-            fingerprint,
-            context,
-            items,
-        })
-        .map_err(map_service_error)?;
+    let command = SubmitImportTask {
+        submission_id,
+        fingerprint,
+        context,
+        items,
+    };
+    let service = state.admin_services().import_tasks();
+    let task = match request.node_pool_id {
+        Some(id) => service.submit_in_pool(command, &id).await,
+        None => service.submit(command),
+    }
+    .map_err(map_service_error)?;
     Ok(AdminResponse::new(
         StatusCode::ACCEPTED,
         AdminEnvelope::ok(SummaryView::from((task, time))),

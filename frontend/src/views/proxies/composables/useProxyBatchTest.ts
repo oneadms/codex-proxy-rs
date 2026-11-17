@@ -5,9 +5,11 @@ import { onScopeDispose, ref, shallowRef } from 'vue'
 import { t } from '@/i18n'
 import { proxyBatchFailure, proxyRequestFailure } from '../utils/batch'
 
-export type ProxyTestExecutor = (proxies: OutboundProxyRecord[], options: RequestOptions, detectLocation: boolean) => Promise<ProxyBatchResult<OutboundProxyRecord>[]>
+type ProxyTestTarget = Pick<OutboundProxyRecord, 'id' | 'name' | 'endpoint'>
 
-export function useProxyBatchTest(test: ProxyTestExecutor) {
+export type ProxyTestExecutor<Target extends ProxyTestTarget = OutboundProxyRecord> = (proxies: Target[], options: RequestOptions, detectLocation: boolean) => Promise<ProxyBatchResult<OutboundProxyRecord>[]>
+
+export function useProxyBatchTest<Target extends ProxyTestTarget>(test: ProxyTestExecutor<Target>) {
   const items = ref<ProxyBatchItem[]>([])
   const running = shallowRef(false)
   const stopping = shallowRef(false)
@@ -24,7 +26,7 @@ export function useProxyBatchTest(test: ProxyTestExecutor) {
     stopping.value = false
   }
 
-  async function run(proxies: OutboundProxyRecord[]) {
+  async function run(proxies: Target[], detectLocation = true) {
     if (running.value || disposed)
       return
     const targets = [
@@ -49,7 +51,7 @@ export function useProxyBatchTest(test: ProxyTestExecutor) {
         for (const item of currentItems)
           item.status = 'running'
         try {
-          const results = await test(group, { silent: true, retry: false }, true)
+          const results = await test(group, { silent: true, retry: false }, detectLocation)
           for (const [index, item] of currentItems.entries()) {
             const result = results[index]
             if (result?.status === 'succeeded' && result.data.lastTest) {

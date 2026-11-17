@@ -909,6 +909,14 @@ OpenAI / xAI 导入用例。并发槽位由单个 Worker 统一管理，条目�
 前端通过当前管理员的任务列表恢复视图，轮询与任务执行互不拥有生命周期。接口、限额与重启语义见
 [后台导入任务](api.md#后台导入任务)
 
+节点池导入的排序和排队预留由 Admin 拥有，已绑定数量及节点探测事实来自 Store。
+分配操作串行选择低负载、低延迟节点，进程内待执行和执行中条目共同参与计数，终态和停止释放预留。
+节点位置自动跟随复用代理管理用例，导入保护同时冻结出口与请求位置，避免协议登录到落库期间改变节点配置。
+OpenAI Provider 拥有密码与 TOTP 登录、会话清理、Codex 授权及回调校验，按账号独占 Cookie 和指定代理 client。
+Provider 下载实时 Sentinel SDK 并拥有验证协议，Host 通过 Admin 的 JavaScript 端口管理 Node 进程、有界通信和取消回收。
+SDK 的 fetch 与 XHR 交回同一 Provider HTTP 客户端；密码、TOTP 密钥和登录 Cookie 不传给脚本进程，未受管的 WebSocket 不能直连。
+会话列表无法唯一确定本次登录、其他会话未清理完成或上游要求人工验证时终止该条目，不把浏览器会话、密码或 TOTP 密钥写入账号凭据
+
 ### 登录与查询身份
 
 管理员和密钥登录共用 `/api/auth/*`、AuthService、Redis 会话结构和 `cpr_session` Cookie。

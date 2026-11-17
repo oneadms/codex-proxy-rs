@@ -68,6 +68,20 @@ async fn import_tasks_should_accept_list_restore_stop_and_deduplicate_without_ec
     )
     .await;
     assert_eq!(retried["data"]["taskId"], id);
+    let mut different_pool = input();
+    different_pool["nodePoolId"] = json!("another-pool");
+    assert_eq!(
+        send(
+            &fixture,
+            "POST",
+            "/api/admin/accounts/import-tasks",
+            different_pool,
+            true
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
     let (_, list) = send(
         &fixture,
         "GET",

@@ -89,9 +89,11 @@ pub(crate) struct OpenAiAdminProvider {
     catalog: Arc<CodexCredentialCatalogService>,
     websocket_pool: Arc<CodexWebSocketPool>,
     desktop_release: CodexDesktopReleaseStatus,
+    javascript: Arc<dyn gateway_admin::ports::javascript::JavaScriptRuntime>,
 }
 
 pub(crate) struct OpenAiAdminServices {
+    pub(crate) javascript: Arc<dyn gateway_admin::ports::javascript::JavaScriptRuntime>,
     pub(crate) credentials: Arc<CodexCredentialAdminService>,
     pub(crate) oauth: Arc<dyn CodexOAuthAdmin>,
     pub(crate) profile_statistics: Arc<CodexCredentialProfileService>,
@@ -120,6 +122,7 @@ impl OpenAiAdminProvider {
             catalog: services.catalog,
             websocket_pool,
             desktop_release,
+            javascript: services.javascript,
         }
     }
 
@@ -497,12 +500,23 @@ impl ProviderAdmin for OpenAiAdminProvider {
         &self,
         command: PrepareCredentialImport,
     ) -> Result<PreparedCredentialImport, ProviderAdminError> {
+        let document = Value::Object(command.document.into_provider_data().into_inner());
+        let document = if document.get("authentication_kind").and_then(Value::as_str)
+            == Some("protocol_login")
+        {
+            crate::credential::prepare_protocol_login(
+                document,
+                command.default_outbound_proxy.as_ref(),
+                command.default_request_location.as_ref(),
+                Arc::clone(&self.javascript),
+            )
+            .await?
+        } else {
+            document
+        };
         let prepared = self
             .credentials
-            .prepare_import_document_with_proxy(
-                Value::Object(command.document.into_provider_data().into_inner()),
-                command.default_outbound_proxy.as_ref(),
-            )
+            .prepare_import_document_with_proxy(document, command.default_outbound_proxy.as_ref())
             .await
             .inspect_err(|error| {
                 log_import_failure("prepare_document", credential_admin_error_code(error));
