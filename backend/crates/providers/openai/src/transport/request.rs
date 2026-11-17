@@ -67,7 +67,8 @@ const ACCOUNT_BOUND_STATE_KEYS: &[&str] = &[
     "conversation",
 ];
 
-const TURN_METADATA_KEYS: &[&str] = &["turnMetadata", "turn_metadata", "x-codex-turn-metadata"];
+pub(super) const TURN_METADATA_KEYS: &[&str] =
+    &["turnMetadata", "turn_metadata", "x-codex-turn-metadata"];
 
 const CROSS_ACCOUNT_CLIENT_HEADERS: &[&str] = &[
     "traceparent",

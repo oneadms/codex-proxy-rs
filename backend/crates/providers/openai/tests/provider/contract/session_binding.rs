@@ -1812,18 +1812,18 @@ async fn assert_spillover_on_wire(anonymous: bool) {
     if anonymous {
         assert!(affinity.alias_ttls().is_empty());
         for request in &sent {
-            assert!(
-                captured_request_body(request)
-                    .get("prompt_cache_key")
-                    .is_none()
+            assert_eq!(
+                captured_request_body(request)["prompt_cache_key"],
+                request.headers["session-id"].to_str().unwrap(),
             );
-            assert!(!request.headers.contains_key("session-id"));
             assert!(!request.headers.contains_key("session_id"));
             assert_eq!(
                 captured_header_values(request, "x-codex-turn-state"),
                 vec![b"unowned-turn-state".to_vec()]
             );
         }
+        assert_eq!(sent[0].headers["session-id"], sent[2].headers["session-id"]);
+        assert_ne!(sent[0].headers["session-id"], sent[1].headers["session-id"]);
     }
     server.verify().await;
 }

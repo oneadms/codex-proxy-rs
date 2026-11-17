@@ -161,13 +161,16 @@ fn assert_isolated_request(
             Value::String(raw) => serde_json::from_str(raw).unwrap(),
             value => value.clone(),
         };
-        assert_eq!(actual, Value::Object(expected_turn_metadata.clone()));
+        session_metadata::assert_completed_metadata(
+            actual,
+            Value::Object(expected_turn_metadata.clone()),
+        );
     }
     let header = headers["x-codex-turn-metadata"].to_str().unwrap();
     assert!(header.is_ascii());
-    assert_eq!(
+    session_metadata::assert_completed_metadata(
         serde_json::from_str::<Value>(header).unwrap(),
-        Value::Object(expected_turn_metadata)
+        Value::Object(expected_turn_metadata),
     );
     assert_eq!(
         body["client_metadata"]["mcp_attribution"],

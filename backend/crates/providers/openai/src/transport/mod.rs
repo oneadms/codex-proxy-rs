@@ -24,6 +24,7 @@ pub mod reset_credits;
 mod response_meta;
 pub(crate) mod routing_affinity;
 pub(crate) mod session;
+pub(crate) mod session_metadata;
 pub mod subscription;
 pub(crate) use endpoints::parse_upstream_base_url;
 pub mod tls;

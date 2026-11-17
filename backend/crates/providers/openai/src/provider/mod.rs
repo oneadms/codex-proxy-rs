@@ -1147,6 +1147,14 @@ impl CodexProvider {
             AttemptTransport::Retry(retry_index) => retry_index.get(),
             AttemptTransport::Default | AttemptTransport::Fallback => 0,
         };
+        if codex_oauth {
+            crate::transport::session_metadata::complete_session_metadata(
+                &mut upstream_request,
+                context.client_api_key_ref().as_str(),
+                context.request_id().as_str(),
+                &installation_id,
+            );
+        }
         let events = cold_response_stream(ColdResponse {
             installation_id,
             client: client

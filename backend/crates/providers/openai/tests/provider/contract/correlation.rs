@@ -391,7 +391,7 @@ async fn image_generation_and_edit_preserve_the_client_turn_identity() {
 }
 
 #[tokio::test]
-async fn cache_key_preserves_explicit_sharing_and_omission_within_an_account() {
+async fn cache_key_preserves_explicit_sharing_and_defaults_to_the_session() {
     let store = Arc::new(MemoryAccountStore::default());
     create_account(&store, "acct_provider_contract").await;
     let server = MockServer::start().await;
@@ -442,6 +442,6 @@ async fn cache_key_preserves_explicit_sharing_and_omission_within_an_account() {
     assert_scoped_id(bodies[0]["prompt_cache_key"].as_str().unwrap(), "shared");
     assert_eq!(bodies[0]["prompt_cache_key"], bodies[1]["prompt_cache_key"]);
     assert_ne!(bodies[0]["session_id"], bodies[1]["session_id"]);
-    assert!(bodies[2].get("prompt_cache_key").is_none());
+    assert_eq!(bodies[2]["prompt_cache_key"], bodies[2]["session_id"]);
     assert_ne!(bodies[0]["prompt_cache_key"], bodies[3]["prompt_cache_key"]);
 }

@@ -536,7 +536,16 @@ HTTP 请求头、正文 metadata、WS 副本及已识别的 Desktop 自动 Git �
 请求 metadata 中的 `turn_id`、`parent_turn_id`、`root_turn_id`，以及 `x-client-turn-id`、
 Images 的 `x-codex-image-turn-id` 和 Desktop 自动 Git 上下文的 `clientUserMessageId`。
 输入项元数据保持不变。Search 的会话 `id` 按同一安装身份域映射，只替换该值的原始字节，其余正文保持不变。
-`prompt_cache_key` 同样按安装身份映射，保留同一身份内的缓存共享关系；未提供时不补造。
+`prompt_cache_key` 同样按安装身份映射，保留同一身份内的缓存共享关系。
+选中 Codex OAuth 账号后，缺失的会话、线程、窗口和轮次身份在出站副本中补齐，
+HTTP 请求头与 WS 的 `client_metadata["x-codex-turn-metadata"]` 使用一致的身份字段。
+客户端已有值及 metadata 扩展保留，缺少 `prompt_cache_key` 时使用补齐后的会话 ID。
+缺少显式会话身份时，锚点优先使用客户端对话或缓存键，再复用当前入站 WS 连接，
+其次使用本地对话锚点或对话开头；均缺失时按本次请求隔离。
+派生值按 Client Key 隔离，并沿用账号安装身份映射；同一请求重试保留轮次 ID，新请求使用新轮次。
+补齐发生在选号与续接归属冻结之后，不改变原始会话亲和或认领客户端未提供的父子线程关系。
+Responses API Key 上游不执行此补齐。
+
 受信任插件可读取原始请求，自行生成身份并在 `outbound` 改写完整请求与关联字段；宿主不重新派生或补回业务字段，
 实际选号与计费归属保持不变，详见 [SDK 出站请求准备](../backend/crates/gateway-plugin/sdk/docs/capabilities.md#上游出站准备)。
 续接 response ID、历史 item/call ID、业务正文和未知扩展不参与映射，
@@ -558,7 +567,6 @@ Images 的 `x-codex-image-turn-id` 和 Desktop 自动 Git 上下文的 `clientUs
 `instructions` 保持不变。HTTP/SSE 与 WebSocket 共用这条正文兼容规则。
 `prompt_cache_key`、`reasoning`、`include` 等 Codex 参数继续保留。上述参数过滤只作用于顶层，
 不删除工具参数 schema、输入内容或 `client_metadata` 内的同名业务字段；其他未知字段继续透传。
-`prompt_cache_key` 不用于补造会话或线程请求头；客户端未提供缓存键、会话或线程身份时保持缺省
 
 发往 Codex/OAuth 的 Responses 请求另按下表处理；API Key 上游保留这些字段。规则只匹配表中列出的位置
 

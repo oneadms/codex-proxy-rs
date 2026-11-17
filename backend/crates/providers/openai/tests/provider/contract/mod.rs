@@ -23,6 +23,7 @@ mod search_history;
 mod search_model_access;
 mod selection_retry;
 mod session_binding;
+mod session_metadata;
 mod timing;
 mod turn_state;
 mod upstream_adapter;
@@ -100,7 +101,7 @@ use crate::support::{
     MemoryAccountStore, MemoryCooldownPort, MemorySessionAffinity, MemorySessionExclusions,
     TestLeaseCoordinator, account_policy, catalog_cache, profile, secret,
 };
-use crate::transport::accept_codex_test_websocket;
+use crate::transport::{accept_codex_test_websocket, read_http_request_with_body};
 
 #[tokio::test]
 async fn account_client_preparation_keeps_ca_read_cause_without_exposing_path() {
@@ -2221,23 +2222,9 @@ async fn truncated_chunked_sse_server() -> (String, tokio::task::JoinHandle<()>)
     (base_url, server)
 }
 
-async fn capture_http_request(stream: &mut TcpStream) -> Vec<u8> {
-    let mut request = Vec::new();
-    let mut buffer = [0_u8; 1024];
-    loop {
-        let read = stream.read(&mut buffer).await.expect("read HTTP request");
-        if read == 0 {
-            return request;
-        }
-        request.extend_from_slice(&buffer[..read]);
-        if request.windows(4).any(|window| window == b"\r\n\r\n") {
-            return request;
-        }
-    }
-}
-
 async fn read_http_request(stream: &mut TcpStream) {
-    drop(capture_http_request(stream).await);
+    // 响应后立即关闭的夹具必须读完整个请求，避免未读正文触发 TCP reset
+    drop(read_http_request_with_body(stream).await);
 }
 
 async fn write_http_chunk(stream: &mut TcpStream, body: &str) {
@@ -4210,7 +4197,7 @@ async fn websocket_fast_path_miss_uses_http_and_keeps_background_preconnect() {
             .accept()
             .await
             .expect("accept HTTP fallback request");
-        let request = capture_http_request(&mut http).await;
+        let request = read_http_request_with_body(&mut http).await;
         assert!(String::from_utf8_lossy(&request).starts_with("POST /codex/responses"));
         http.write_all(
             format!(
@@ -4341,7 +4328,7 @@ async fn connection_failure_preserves_io_cause_without_claiming_payload_was_sent
             Some(tokio::spawn(async move {
                 let (mut socket, _) = listener.accept().await.unwrap();
                 assert!(
-                    capture_http_request(&mut socket)
+                    read_http_request_with_body(&mut socket)
                         .await
                         .starts_with(b"CONNECT ")
                 );
@@ -5022,7 +5009,7 @@ async fn repeated_websocket_failures_exhaust_budget_then_use_http_and_report_htt
         for status in [200, 503] {
             let (mut http, _) = listener.accept().await.expect("accept HTTP fallback");
             assert!(
-                String::from_utf8_lossy(&capture_http_request(&mut http).await)
+                String::from_utf8_lossy(&read_http_request_with_body(&mut http).await)
                     .starts_with("POST /codex/responses")
             );
             let body = if status == 200 {
@@ -5128,7 +5115,7 @@ async fn websocket_upgrade_required_immediately_enables_session_http_fallback() 
     );
     let server = tokio::spawn(async move {
         let (mut opening, _) = listener.accept().await.expect("accept WS opening");
-        let request = capture_http_request(&mut opening).await;
+        let request = read_http_request_with_body(&mut opening).await;
         assert!(String::from_utf8_lossy(&request).starts_with("GET /codex/responses"));
         let body = r#"{"error":{"code":"upgrade_required","message":"use HTTP"}}"#;
         opening
@@ -5143,7 +5130,7 @@ async fn websocket_upgrade_required_immediately_enables_session_http_fallback() 
             .expect("write 426 response");
 
         let (mut http, _) = listener.accept().await.expect("accept sticky HTTP request");
-        let request = capture_http_request(&mut http).await;
+        let request = read_http_request_with_body(&mut http).await;
         assert!(String::from_utf8_lossy(&request).starts_with("POST /codex/responses"));
         http.write_all(
             format!(
@@ -5706,7 +5693,7 @@ async fn downstream_websocket_new_chain_should_override_session_and_attempt_http
     let base_url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move {
         let (mut opening, _) = listener.accept().await.unwrap();
-        let request = capture_http_request(&mut opening).await;
+        let request = read_http_request_with_body(&mut opening).await;
         assert!(String::from_utf8_lossy(&request).starts_with("GET /codex/responses"));
         opening
             .write_all(
@@ -5826,7 +5813,7 @@ async fn websocket_opening_account_rejection_keeps_replay_safe_without_transport
     let base_url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move {
         let (mut opening, _) = listener.accept().await.unwrap();
-        let request = capture_http_request(&mut opening).await;
+        let request = read_http_request_with_body(&mut opening).await;
         assert!(String::from_utf8_lossy(&request).starts_with("GET /codex/responses"));
         // 额度耗尽拒绝通常携带小时级的 retry-after；同账号重试注定再次命中
         let body = r#"{"error":{"message":"You have reached your usage limit.","type":"rate_limit_error"}}"#;
@@ -6416,7 +6403,7 @@ async fn http_account_scoping_keeps_installation_in_metadata() {
                 .as_str()
                 .expect("body metadata"),
         ] {
-            assert_eq!(
+            session_metadata::assert_completed_metadata(
                 serde_json::from_str::<Value>(encoded).expect("turn metadata JSON"),
                 json!({"installation_id": installation_id, "future": true}),
             );
@@ -6523,7 +6510,7 @@ async fn websocket_account_scoping_keeps_installation_in_metadata() {
                 .as_str()
                 .expect("body metadata"),
         ] {
-            assert_eq!(
+            session_metadata::assert_completed_metadata(
                 serde_json::from_str::<Value>(encoded).expect("turn metadata JSON"),
                 json!({"installation_id": installation_id, "future": true}),
             );
@@ -6708,8 +6695,8 @@ async fn cross_account_scope_sanitizes_only_known_turn_metadata_fields() {
         .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
         .expect("sanitized x-codex-turn-metadata");
 
-    assert_eq!(turn_metadata, json!({"future": {"keep": true}}));
-    assert_eq!(codex_turn_metadata, json!({"safe": 17}));
+    session_metadata::assert_completed_metadata(turn_metadata, json!({"future": {"keep": true}}));
+    session_metadata::assert_completed_metadata(codex_turn_metadata, json!({"safe": 17}));
     assert_eq!(
         body.get("turn_metadata"),
         Some(&json!("future-opaque-shape"))
@@ -6782,9 +6769,9 @@ async fn websocket_account_scoping_preserves_ascii_turn_metadata_and_unicode_inp
     assert!(encoded.is_ascii(), "embedded header JSON must remain ASCII");
     let mut expected: Value = serde_json::from_str(raw).expect("original metadata");
     expected["installation_id"] = json!(installation_id);
-    assert_eq!(
+    session_metadata::assert_completed_metadata(
         serde_json::from_str::<Value>(encoded).expect("metadata JSON"),
-        expected
+        expected,
     );
     assert_eq!(body["input"], input);
 }
@@ -6828,9 +6815,9 @@ async fn http_account_scoping_keeps_unicode_metadata_ascii_in_headers_and_body()
                 .expect("client metadata"),
         ] {
             assert!(encoded.is_ascii(), "scoped header JSON must remain ASCII");
-            assert_eq!(
+            session_metadata::assert_completed_metadata(
                 serde_json::from_str::<Value>(encoded).expect("metadata JSON"),
-                expected
+                expected.clone(),
             );
         }
     }
@@ -7242,7 +7229,7 @@ async fn account_change_drops_only_account_bound_opaque_headers() {
         json!({"installation_id": installation_id, "safe": true}),
         json!({"installationId": installation_id, "safe": false}),
     ]) {
-        assert_eq!(
+        session_metadata::assert_completed_metadata(
             serde_json::from_slice::<Value>(raw).expect("turn metadata JSON"),
             expected,
         );
@@ -7252,7 +7239,15 @@ async fn account_change_drops_only_account_bound_opaque_headers() {
         vec![b"keep-on-switch".to_vec()]
     );
     assert!(captured_header_values(&cross_account, "x-codex-turn-state").is_empty());
-    assert!(captured_header_values(&cross_account, "x-codex-turn-metadata").is_empty());
+    let cross_body = captured_request_body(&cross_account);
+    let cross_installation = &cross_body["client_metadata"]["x-codex-installation-id"];
+    assert_ne!(cross_installation, installation_id);
+    let metadata = captured_header_values(&cross_account, "x-codex-turn-metadata");
+    assert_eq!(metadata.len(), 1);
+    session_metadata::assert_completed_metadata(
+        serde_json::from_slice(&metadata[0]).expect("new account metadata"),
+        json!({"installation_id": cross_installation}),
+    );
     assert_eq!(
         captured_header_values(&cross_account, "x-openai-future"),
         vec![b"keep-on-switch".to_vec()]
@@ -13183,6 +13178,7 @@ async fn capture_client_request(
     mut protocol_context: Map<String, Value>,
     api_key: bool,
 ) -> Map<String, Value> {
+    let explicit_cache_key = body.contains_key("prompt_cache_key");
     let server = MockServer::start().await;
     let path = if api_key {
         "/responses"
@@ -13235,6 +13231,9 @@ async fn capture_client_request(
     // 每次测试创建不同账号，账号绑定的安装标识由独立身份合同覆盖
     // 这里只比较下游兼容对业务正文的影响
     sent.remove("client_metadata");
+    if !explicit_cache_key {
+        sent.remove("prompt_cache_key");
+    }
     sent
 }
 
