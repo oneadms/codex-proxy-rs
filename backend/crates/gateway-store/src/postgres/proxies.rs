@@ -789,9 +789,30 @@ impl ProxyStore for PgProxyRepository {
         let revision = bump_config_revision_in_transaction(&mut transaction)
             .await
             .map_err(store_error)?;
-        ensure_unmanaged(&mut transaction, &command.id)
-            .await
-            .map_err(store_error)?;
+        let managed_name: Option<String> = sqlx::query_scalar(
+            "select p.name from outbound_proxies p
+             join mihomo_nodes n on n.proxy_id = p.id where p.id = $1",
+        )
+        .bind(&command.id)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|source| store_error(unavailable(source)))?;
+        // 节点入口由订阅维护，导入只能开启位置跟随，不能同时改写其他配置
+        if managed_name.is_some_and(|name| {
+            name != command.name
+                || command.auto_location != Some(true)
+                || command.proxy.is_some()
+                || command.enabled.is_some()
+                || command.location.is_some()
+                || command.max_websocket_connections.is_some()
+        }) {
+            // 返回前释放事务锁，避免误挡随后的导入预留
+            let error = match transaction.rollback().await {
+                Ok(()) => conflict(&command.id),
+                Err(cleanup) => conflict(&command.id).with_cleanup(cleanup),
+            };
+            return Err(store_error(error));
+        }
         if let Some(proxy) = &command.proxy {
             lock_url(&mut transaction, proxy)
                 .await

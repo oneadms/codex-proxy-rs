@@ -8,11 +8,13 @@ use gateway_admin::{
         mihomo::{
             MihomoNodeConfig, MihomoNodeQuery, NewMihomoSubscription, UpdateMihomoSubscription,
         },
-        proxies::UpdateProxy,
+        proxies::{ProxyLocationDetection, ProxyTestResult, UpdateProxy},
     },
     ports::{mihomo::MihomoStore, proxy::ProxyStore, store::AdminStoreErrorKind},
 };
-use gateway_core::account::{ProviderAccountId, ProviderAccountStore as _};
+use gateway_core::account::{
+    OutboundProxy, ProviderAccountId, ProviderAccountStore as _, RequestLocation,
+};
 use gateway_store::postgres::{
     PgMihomoRepository, PgProviderAccountRepository, PgProxyRepository,
     ProviderAccountRepository as _,
@@ -348,6 +350,126 @@ async fn refresh_keeps_node_identity_and_accounts_fail_closed() {
         .unwrap()
         .port;
     assert!(old_ports.contains(&second_port));
+    database.close().await;
+}
+
+#[tokio::test]
+async fn managed_node_location_following_preserves_subscription_config_and_import_guards() {
+    let Some(database) = TestDatabase::create("mihomo_import_location").await else {
+        return;
+    };
+    let mihomo = PgMihomoRepository::new(database.pool.clone());
+    let proxies = PgProxyRepository::new(database.pool.clone());
+    let created = mihomo
+        .create(
+            NewMihomoSubscription {
+                name: "Location subscription".to_owned(),
+                url: SecretString::from("https://subscription.invalid/location".to_owned()),
+            },
+            vec![node("Node A", "a1")],
+            &context(),
+        )
+        .await
+        .unwrap();
+    let node = mihomo
+        .nodes(query(&created.subscription.id))
+        .await
+        .unwrap()
+        .items
+        .remove(0);
+    let original = proxies.get(&node.proxy_id).await.unwrap();
+    assert!(original.managed && !original.auto_location);
+    let location: RequestLocation = serde_json::from_value(serde_json::json!({
+        "country": "US", "region": "Arizona", "city": "Phoenix", "timezone": "America/Phoenix"
+    }))
+    .unwrap();
+    let mut enable = UpdateProxy {
+        id: original.id.clone(),
+        revision: original.revision,
+        name: original.name.clone(),
+        auto_location: Some(true),
+        enabled: None,
+        max_websocket_connections: None,
+        location: None,
+        proxy: None,
+        test: Some(ProxyTestResult {
+            location: ProxyLocationDetection::Detected {
+                location: location.clone(),
+            },
+            success: true,
+            latency_ms: 20,
+            exit_ip: None,
+            exit_ipv4: None,
+            exit_ipv6: None,
+            message: "synthetic probe".to_owned(),
+        }),
+    };
+    let enabled = proxies.update(enable.clone(), &context()).await.unwrap();
+    assert!(enabled.record.auto_location);
+    assert_eq!(enabled.record.effective_location(), Some(&location));
+    assert_eq!(enabled.record.proxy, original.proxy);
+    assert!(enabled.record.revision > original.revision);
+    // 开启跟随后仍需校验版本，不能覆盖已经变化的节点状态
+    assert_eq!(
+        proxies
+            .update(enable.clone(), &context())
+            .await
+            .unwrap_err()
+            .kind(),
+        AdminStoreErrorKind::Conflict
+    );
+    enable.revision = enabled.record.revision;
+    for forbidden in [
+        UpdateProxy {
+            name: "Other node".to_owned(),
+            ..enable.clone()
+        },
+        UpdateProxy {
+            proxy: Some(OutboundProxy::parse("http://127.0.0.1:19999").unwrap()),
+            ..enable.clone()
+        },
+        UpdateProxy {
+            enabled: Some(false),
+            ..enable.clone()
+        },
+        UpdateProxy {
+            auto_location: Some(false),
+            ..enable.clone()
+        },
+        UpdateProxy {
+            location: Some(Some(RequestLocation::default())),
+            ..enable.clone()
+        },
+        UpdateProxy {
+            max_websocket_connections: Some(1),
+            ..enable.clone()
+        },
+    ] {
+        assert_eq!(
+            proxies
+                .update(forbidden, &context())
+                .await
+                .unwrap_err()
+                .kind(),
+            AdminStoreErrorKind::Conflict
+        );
+        let current = proxies.get(&original.id).await.unwrap();
+        assert_eq!(current.revision, enabled.record.revision);
+        assert_eq!(current.proxy, original.proxy);
+        assert_eq!(current.effective_location(), Some(&location));
+        assert_eq!(
+            mihomo.runtime_snapshot().await.unwrap().config_revision,
+            enabled.config_revision
+        );
+    }
+    let reservation = proxies.reserve_import(&original.id).await.unwrap();
+    assert_eq!(reservation.binding.proxy, original.proxy);
+    assert_eq!(reservation.request_location, Some(location));
+    assert_eq!(
+        proxies.update(enable, &context()).await.unwrap_err().kind(),
+        AdminStoreErrorKind::Conflict
+    );
+    drop(reservation);
     database.close().await;
 }
 

@@ -71,7 +71,7 @@ pub struct ProxyTestResult {
 #[derive(Debug, Clone)]
 pub struct ProxyRecord {
     pub enabled: bool,
-    /// 配置由订阅维护，禁止通过普通代理编辑入口修改
+    /// 连接配置由订阅维护，代理更新仅允许开启位置自动跟随
     pub managed: bool,
     /// 仅限制新选择；不可用节点仍保留已绑定账号的固定出口
     pub available: bool,

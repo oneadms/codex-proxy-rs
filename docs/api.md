@@ -1535,6 +1535,8 @@ OAuth 等待回调期间不持有保护；提交仍拒绝已删除或连接配�
 
 每项包含 `id`、`proxyId`、`proxyRevision`、`name`、`type`、`available`、`accountCount`、脱敏 `endpoint`，以及受管代理相同的 `autoLocation`、`location`、`detectedLocation`、`lastTest`、`lastTestAt`、`lastTestAtDisplay`；`page` 返回页码、页大小、总数和总页数。`proxyId` 可用于现有账号代理绑定合同；`accountCount` 是当前绑定该节点的账号数
 
+托管节点仅允许通过代理更新接口开启 `autoLocation: true`，名称须保持原值，不能同时修改其他配置；节点池导入复用该操作。代理版本校验与导入期间的保护同样生效
+
 节点监听恢复后自动探测真实出口 IP、地理位置和连接延迟，每批最多两条，与手动代理测试共用并发限制。探测成功且位置已识别的节点每 30 分钟更新，其他结果在 5 分钟后重试。手动探测复用 `/api/admin/proxies/test`，提交 `id=proxyId`、`revision=proxyRevision` 和 `detectLocation`；`true` 同时请求地理位置，`false` 仅测试连接，已开启代理位置自动跟随时仍解析位置。探测不会变更账号绑定或自动开启请求位置跟随。订阅中的节点配置变化或节点不可用时清除旧探测结果并推进代理版本，旧版本探测结果返回冲突
 
 订阅更新移除的节点保留原节点与代理 ID，但标记为不可用，以避免静默改绑账号。不可用节点不再有本地监听；解除绑定后才可删除其订阅。节点监听仅绑定服务器 `127.0.0.1`，不能从远端客户端直接访问
