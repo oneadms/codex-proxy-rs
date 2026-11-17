@@ -21,7 +21,7 @@ use tokio::{
 
 use super::{
     MAX_SUBSCRIPTION_NODES, MihomoConfig, MihomoError, MihomoNodeConfig, MihomoRuntimeNode,
-    subscription,
+    controller::Controller, subscription,
 };
 
 const VALIDATION_TIMEOUT: Duration = Duration::from_secs(20);
@@ -61,7 +61,8 @@ impl MihomoHost {
 
     pub async fn validate(&self, nodes: &[MihomoRuntimeNode]) -> Result<(), MihomoError> {
         let _state = self.state.lock().await;
-        self.check_configuration(configuration(nodes)?).await?;
+        self.check_configuration(configuration(nodes, None)?)
+            .await?;
         Ok(())
     }
 
@@ -90,22 +91,62 @@ impl MihomoHost {
     pub async fn apply(&self, mut nodes: Vec<MihomoRuntimeNode>) -> Result<(), MihomoError> {
         nodes.sort_unstable_by(|left, right| left.id.cmp(&right.id));
         let mut state = self.state.lock().await;
-        if let Some(process) = state.as_mut()
-            && process.nodes == nodes
+        if !nodes.is_empty()
+            && let Some(process) = state.as_mut()
             && matches!(process.child.try_wait(), Ok(None))
         {
-            return Ok(());
+            if process.confirmed && process.nodes == nodes {
+                return Ok(());
+            }
+            // 先移除过期入口，重载失败时也不能让新配置继续命中旧出口
+            // 未变入口保留在同一进程内，已保存账号的连接不会被整体重启打断
+            let retained = process
+                .nodes
+                .iter()
+                .filter(|current| {
+                    nodes
+                        .binary_search_by(|node| node.id.cmp(&current.id))
+                        .is_ok_and(|index| nodes[index] == **current)
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            if retained.len() != process.nodes.len() {
+                let document = configuration(&retained, Some(&process.controller))?;
+                let file = self.check_configuration(document.clone()).await?;
+                process.reload(file, retained, &document).await?;
+            }
+            if process.confirmed && process.nodes == nodes {
+                return Ok(());
+            }
+            let document = configuration(&nodes, Some(&process.controller))?;
+            let file = self.check_configuration(document.clone()).await?;
+            // 新端口先验证占用，不能把其他本机服务误认成已启动的节点监听
+            let current_ports = process
+                .nodes
+                .iter()
+                .map(|node| node.port)
+                .collect::<HashSet<_>>();
+            let ports = nodes
+                .iter()
+                .filter(|node| !current_ports.contains(&node.port))
+                .map(|node| TcpListener::bind((Ipv4Addr::LOCALHOST, node.port)))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| MihomoError::unavailable("Mihomo 节点监听端口已被占用"))?;
+            drop(ports);
+            return process.reload(file, nodes, &document).await;
         }
 
-        // apply 只接收已提交配置，切换失败或取消时不能保留旧端口到节点的映射
         if let Some(mut process) = state.take() {
             process.stop().await;
         }
         if nodes.is_empty() {
             return Ok(());
         }
-        let candidate = self.check_configuration(configuration(&nodes)?).await?;
-        *state = Some(self.start(candidate, nodes).await?);
+        let controller = Controller::new(&nodes)?;
+        let candidate = self
+            .check_configuration(configuration(&nodes, Some(&controller))?)
+            .await?;
+        *state = Some(self.start(candidate, nodes, controller).await?);
         Ok(())
     }
 
@@ -119,8 +160,8 @@ impl MihomoHost {
         subscription::fetch(&self.client, url).await
     }
 
-    async fn check_configuration(&self, document: Vec<u8>) -> Result<ConfigFile, MihomoError> {
-        let file = ConfigFile::write(&self.directory, &document)?;
+    async fn check_configuration(&self, document: String) -> Result<ConfigFile, MihomoError> {
+        let file = ConfigFile::write(&self.directory, document.as_bytes())?;
         let mut command = self.command(&file.path);
         command.arg("-t");
         let mut child = command
@@ -157,6 +198,7 @@ impl MihomoHost {
         &self,
         file: ConfigFile,
         nodes: Vec<MihomoRuntimeNode>,
+        controller: Controller,
     ) -> Result<RunningProcess, MihomoError> {
         // 先确认端口可用，避免其他本地服务被误判成当前候选的就绪监听
         let ports = nodes
@@ -172,10 +214,13 @@ impl MihomoHost {
         let mut process = RunningProcess {
             child,
             nodes,
+            controller,
+            confirmed: false,
             _file: file,
         };
         let ready = tokio::time::timeout(STARTUP_TIMEOUT, process.wait_ready()).await;
         if matches!(ready, Ok(Ok(()))) {
+            process.confirmed = true;
             Ok(process)
         } else {
             process.stop().await;
@@ -195,11 +240,34 @@ impl Drop for MihomoHost {
 struct RunningProcess {
     child: Child,
     nodes: Vec<MihomoRuntimeNode>,
+    controller: Controller,
+    // 重载被取消或响应丢失后仍须重新对账，不能按上一次确认的列表跳过
+    confirmed: bool,
     // 配置文件与进程共存，停止或取消后由 Drop 清理
     _file: ConfigFile,
 }
 
 impl RunningProcess {
+    async fn reload(
+        &mut self,
+        file: ConfigFile,
+        nodes: Vec<MihomoRuntimeNode>,
+        document: &str,
+    ) -> Result<(), MihomoError> {
+        self.nodes = nodes;
+        self._file = file;
+        self.confirmed = false;
+        self.controller.reload(document).await?;
+        if !matches!(
+            tokio::time::timeout(STARTUP_TIMEOUT, self.wait_ready()).await,
+            Ok(Ok(()))
+        ) {
+            return Err(MihomoError::unavailable("Mihomo 节点监听未能完成重载"));
+        }
+        self.confirmed = true;
+        Ok(())
+    }
+
     async fn stop(&mut self) {
         let _ = self.child.kill().await;
         let _ = self.child.wait().await;
@@ -226,7 +294,10 @@ impl RunningProcess {
                 .buffer_unordered(32)
                 .all(|ready| async move { ready })
                 .await;
-            if all_ready && self.child.try_wait().map_err(|_| ())?.is_none() {
+            if all_ready
+                && self.controller.ready().await
+                && self.child.try_wait().map_err(|_| ())?.is_none()
+            {
                 return Ok(());
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -275,7 +346,10 @@ impl Drop for ConfigFile {
     }
 }
 
-fn configuration(nodes: &[MihomoRuntimeNode]) -> Result<Vec<u8>, MihomoError> {
+fn configuration(
+    nodes: &[MihomoRuntimeNode],
+    controller: Option<&Controller>,
+) -> Result<String, MihomoError> {
     if nodes.len() > MAX_RUNTIME_NODES {
         return Err(MihomoError::invalid("Mihomo 全局节点数量超过监听端口上限"));
     }
@@ -307,7 +381,7 @@ fn configuration(nodes: &[MihomoRuntimeNode]) -> Result<Vec<u8>, MihomoError> {
             "proxy": name,
         }));
     }
-    serde_json::to_vec(&json!({
+    let mut document = json!({
         "allow-lan": false,
         "bind-address": "127.0.0.1",
         "mode": "rule",
@@ -317,8 +391,11 @@ fn configuration(nodes: &[MihomoRuntimeNode]) -> Result<Vec<u8>, MihomoError> {
         "proxies": proxies,
         "listeners": listeners,
         "rules": ["MATCH,REJECT"],
-    }))
-    .map_err(|_| MihomoError::invalid("Mihomo 节点配置不合法"))
+    });
+    if let Some(controller) = controller {
+        controller.configure(&mut document);
+    }
+    serde_json::to_string(&document).map_err(|_| MihomoError::invalid("Mihomo 节点配置不合法"))
 }
 
 fn available_ports(count: usize) -> Result<Vec<u16>, MihomoError> {

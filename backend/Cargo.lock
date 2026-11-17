@@ -1886,6 +1886,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "uuid",
  "wiremock",
  "yaml-rust2 0.13.0",
 ]

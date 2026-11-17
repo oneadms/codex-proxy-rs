@@ -24,7 +24,7 @@ use secrecy::SecretString;
 use super::{TestDatabase, provider_accounts::account};
 
 #[tokio::test]
-async fn refresh_keeps_node_identity_and_accounts_fail_closed() {
+async fn refresh_keeps_node_identity_and_bound_account_runtime() {
     let Some(database) = TestDatabase::create("mihomo_refresh").await else {
         return;
     };
@@ -135,9 +135,22 @@ async fn refresh_keeps_node_identity_and_accounts_fail_closed() {
     assert_eq!(node_b_after.endpoint, node_b.endpoint);
     let runtime = mihomo.runtime_snapshot().await.unwrap();
     assert_eq!(runtime.config_revision, refreshed.config_revision);
-    assert_eq!(runtime.nodes.len(), 2);
-    assert!(!runtime.nodes.iter().any(|node| node.id == node_a.id));
-    assert!(!runtime.nodes.iter().any(|node| node.port == node_a_port));
+    assert_eq!(runtime.nodes.len(), 3);
+    let retained_a = runtime
+        .nodes
+        .iter()
+        .find(|node| node.id == node_a.id)
+        .expect("bound unavailable node remains in runtime snapshot");
+    assert_eq!(retained_a.port, node_a_port);
+    assert_eq!(
+        retained_a.config,
+        serde_json::json!({
+            "server": "a1.example.invalid",
+            "port": 443,
+            "cipher": "chacha20-ietf-poly1305",
+            "password": "fixture-secret",
+        })
+    );
     let unavailable_a = proxies.get(&node_a.proxy_id).await.unwrap();
     assert!(unavailable_a.managed && !unavailable_a.available && unavailable_a.enabled);
     assert_eq!(
@@ -350,6 +363,140 @@ async fn refresh_keeps_node_identity_and_accounts_fail_closed() {
         .unwrap()
         .port;
     assert!(old_ports.contains(&second_port));
+    database.close().await;
+}
+
+#[tokio::test]
+async fn changed_bound_node_keeps_saved_account_on_old_runtime_entry() {
+    let Some(database) = TestDatabase::create("mihomo_bound_node_version").await else {
+        return;
+    };
+    let mihomo = PgMihomoRepository::new(database.pool.clone());
+    let proxies = PgProxyRepository::new(database.pool.clone());
+    let accounts = PgProviderAccountRepository::new(database.pool.clone());
+    let original = node("Node A", "a1");
+    let created = mihomo
+        .create(
+            NewMihomoSubscription {
+                name: "Bound node version".to_owned(),
+                url: SecretString::from("https://subscription.invalid/version".to_owned()),
+            },
+            vec![original.clone()],
+            &context(),
+        )
+        .await
+        .unwrap();
+    let saved = mihomo
+        .nodes(query(&created.subscription.id))
+        .await
+        .unwrap()
+        .items
+        .remove(0);
+    let old_proxy = proxies.get(&saved.proxy_id).await.unwrap();
+    let old_runtime = mihomo.runtime_snapshot().await.unwrap();
+    let old_port = old_runtime.nodes[0].port;
+
+    accounts
+        .insert_provider_account(account("acct_mihomo_version", "mihomo-version-user"))
+        .await
+        .unwrap();
+    sqlx::query(
+        "update provider_accounts set outbound_proxy_id = $2, outbound_proxy_url = $3 where id = $1",
+    )
+    .bind("acct_mihomo_version")
+    .bind(&saved.proxy_id)
+    .bind(&saved.endpoint)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+
+    let changed = node("Node A", "a2");
+    let refreshed = mihomo
+        .sync_nodes(
+            &created.subscription.id,
+            created.subscription.revision,
+            vec![changed],
+            &context(),
+        )
+        .await
+        .unwrap();
+    let current = mihomo.nodes(query(&created.subscription.id)).await.unwrap();
+    assert_eq!(current.total, 2);
+    let legacy = current
+        .items
+        .iter()
+        .find(|item| item.id == saved.id)
+        .expect("legacy node remains addressable");
+    assert!(!legacy.available);
+    assert_eq!(legacy.name, saved.name);
+    assert_eq!(legacy.proxy_id, saved.proxy_id);
+    assert_eq!(legacy.endpoint, saved.endpoint);
+    let active = current
+        .items
+        .iter()
+        .find(|item| item.available)
+        .expect("new node is available");
+    assert_ne!(active.id, saved.id);
+    assert_ne!(active.proxy_id, saved.proxy_id);
+    assert_ne!(active.endpoint, saved.endpoint);
+
+    let binding: (Option<String>, Option<String>) = sqlx::query_as(
+        "select outbound_proxy_id, outbound_proxy_url from provider_accounts where id = $1",
+    )
+    .bind("acct_mihomo_version")
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(binding.0.as_deref(), Some(saved.proxy_id.as_str()));
+    assert_eq!(binding.1.as_deref(), Some(saved.endpoint.as_str()));
+    assert_eq!(
+        proxies.get(&saved.proxy_id).await.unwrap().proxy,
+        old_proxy.proxy
+    );
+
+    let runtime = mihomo.runtime_snapshot().await.unwrap();
+    assert_eq!(runtime.config_revision, refreshed.config_revision);
+    assert_eq!(runtime.nodes.len(), 2);
+    let old_runtime_node = runtime
+        .nodes
+        .iter()
+        .find(|runtime_node| runtime_node.port == old_port)
+        .expect("old listener remains in runtime");
+    assert_eq!(old_runtime_node.id, saved.id);
+    assert_eq!(old_runtime_node.config, original.config);
+    let new_runtime_node = runtime
+        .nodes
+        .iter()
+        .find(|runtime_node| runtime_node.id == active.id)
+        .expect("new listener is in runtime");
+    assert_eq!(new_runtime_node.config["server"], "a2.example.invalid");
+
+    sqlx::query(
+        "update provider_accounts set outbound_proxy_id = null, outbound_proxy_url = null where id = $1",
+    )
+    .bind("acct_mihomo_version")
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    let cleaned = mihomo
+        .sync_nodes(
+            &created.subscription.id,
+            refreshed.subscription.revision,
+            vec![node("Node A", "a2")],
+            &context(),
+        )
+        .await
+        .unwrap();
+    let current = mihomo.nodes(query(&created.subscription.id)).await.unwrap();
+    assert_eq!(current.total, 1);
+    assert!(current.items[0].available);
+    assert_eq!(current.items[0].proxy_id, active.proxy_id);
+    assert!(proxies.get(&saved.proxy_id).await.is_err());
+    let runtime = mihomo.runtime_snapshot().await.unwrap();
+    assert_eq!(runtime.config_revision, cleaned.config_revision);
+    assert_eq!(runtime.nodes.len(), 1);
+    assert_eq!(runtime.nodes[0].id, active.id);
+
     database.close().await;
 }
 

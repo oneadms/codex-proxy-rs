@@ -178,7 +178,7 @@ async fn existing_nodes(
 ) -> StoreResult<HashMap<String, ExistingNode>> {
     let rows = sqlx::query(
         "select id, proxy_id, source_name, kind, config_json, available
-         from mihomo_nodes where subscription_id = $1 for update",
+         from mihomo_nodes where subscription_id = $1 and not retired for update",
     )
     .bind(subscription_id)
     .fetch_all(&mut **transaction)
@@ -221,8 +221,9 @@ async fn sync_nodes_in_transaction(
     nodes: &[MihomoNodeConfig],
 ) -> StoreResult<bool> {
     let mut existing = existing_nodes(transaction, subscription_id).await?;
+    let retired_pruned = prune_unbound_retired_nodes(transaction, subscription_id).await?;
     let incoming_names: HashSet<&str> = nodes.iter().map(|node| node.name.as_str()).collect();
-    let mut runtime_changed = false;
+    let mut runtime_changed = retired_pruned;
 
     for (name, node) in &existing {
         if node.available && !incoming_names.contains(name.as_str()) {
@@ -236,21 +237,44 @@ async fn sync_nodes_in_transaction(
             .execute(&mut **transaction)
             .await
             .map_err(unavailable)?;
-            invalidate_node_probe(transaction, &node.proxy_id).await?;
+            if !node_has_bindings(transaction, &node.proxy_id).await? {
+                invalidate_node_probe(transaction, &node.proxy_id).await?;
+            }
             runtime_changed = true;
         }
     }
 
     for node in nodes {
         if let Some(current) = existing.remove(&node.name) {
-            if !current.available || current.kind != node.kind || current.config != node.config {
+            let config_changed = current.kind != node.kind || current.config != node.config;
+            if !current.available || config_changed {
                 // 导入授权预留期间保持节点实际出口不变，未变化节点不占用排他锁
                 if !super::proxies::try_exclude_active_imports(transaction, &current.proxy_id)
                     .await?
                 {
                     return Err(conflict(subscription_id));
                 }
-                invalidate_node_probe(transaction, &current.proxy_id).await?;
+
+                if config_changed && node_has_bindings(transaction, &current.proxy_id).await? {
+                    // 已绑定账号继续使用旧出口；新配置另建节点和监听，避免订阅刷新
+                    // 通过共享代理入口改写已保存账号的实际链路
+                    sqlx::query(
+                        "update mihomo_nodes
+                         set retired = true, available = false, updated_at = now()
+                         where id = $1",
+                    )
+                    .bind(&current.id)
+                    .execute(&mut **transaction)
+                    .await
+                    .map_err(unavailable)?;
+                    insert_node_in_transaction(transaction, subscription_id, node).await?;
+                    runtime_changed = true;
+                    continue;
+                }
+
+                if config_changed {
+                    invalidate_node_probe(transaction, &current.proxy_id).await?;
+                }
                 runtime_changed = true;
             }
             sqlx::query(
@@ -267,49 +291,108 @@ async fn sync_nodes_in_transaction(
             continue;
         }
 
-        // 所有订阅写入已持有 runtime_settings 行锁，失效节点仍占用原端口，删除后才可复用
-        let port: i32 = sqlx::query_scalar(
-            "select port from generate_series(20000, 39999) as candidate(port)
-             where not exists(select 1 from mihomo_nodes n where n.listener_port = candidate.port)
-             order by port limit 1",
-        )
-        .fetch_optional(&mut **transaction)
-        .await
-        .map_err(unavailable)?
-        .ok_or_else(invalid)?;
-        let node_id = format!("mihomo_node_{}", uuid::Uuid::now_v7().simple());
-        let proxy_id = format!("mihomo_proxy_{}", uuid::Uuid::now_v7().simple());
-        let proxy =
-            gateway_core::account::OutboundProxy::parse(&format!("http://127.0.0.1:{port}"))
-                .map_err(|source| invalid().with_source(source))?;
-        sqlx::query(
-            "insert into outbound_proxies (id, name, proxy_url, enabled)
-             values ($1, $2, $3, true)",
-        )
-        .bind(&proxy_id)
-        .bind(&node.name)
-        .bind(proxy.expose_url())
-        .execute(&mut **transaction)
-        .await
-        .map_err(unavailable)?;
-        sqlx::query(
-            "insert into mihomo_nodes
-             (id, subscription_id, source_name, proxy_id, listener_port, kind, config_json)
-             values ($1, $2, $3, $4, $5, $6, $7)",
-        )
-        .bind(node_id)
-        .bind(subscription_id)
-        .bind(&node.name)
-        .bind(proxy_id)
-        .bind(port)
-        .bind(&node.kind)
-        .bind(Json(node.config.clone()))
-        .execute(&mut **transaction)
-        .await
-        .map_err(unavailable)?;
+        insert_node_in_transaction(transaction, subscription_id, node).await?;
         runtime_changed = true;
     }
     Ok(runtime_changed)
+}
+
+async fn node_has_bindings(
+    transaction: &mut Transaction<'_, Postgres>,
+    proxy_id: &str,
+) -> StoreResult<bool> {
+    sqlx::query_scalar(
+        "select exists(
+             select 1 from provider_accounts where outbound_proxy_id = $1
+         ) or exists(
+             select 1 from plugin_update_sources where outbound_proxy_id = $1
+         ) or exists(
+             select 1 from plugin_artifacts where outbound_proxy_id = $1
+         )",
+    )
+    .bind(proxy_id)
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(unavailable)
+}
+
+async fn prune_unbound_retired_nodes(
+    transaction: &mut Transaction<'_, Postgres>,
+    subscription_id: &str,
+) -> StoreResult<bool> {
+    let retired: Vec<(String, String)> = sqlx::query_as(
+        "select id, proxy_id from mihomo_nodes
+         where subscription_id = $1 and retired for update",
+    )
+    .bind(subscription_id)
+    .fetch_all(&mut **transaction)
+    .await
+    .map_err(unavailable)?;
+    let mut pruned = false;
+    for (node_id, proxy_id) in retired {
+        if node_has_bindings(transaction, &proxy_id).await? {
+            continue;
+        }
+        sqlx::query("delete from mihomo_nodes where id = $1")
+            .bind(node_id)
+            .execute(&mut **transaction)
+            .await
+            .map_err(unavailable)?;
+        sqlx::query("delete from outbound_proxies where id = $1")
+            .bind(proxy_id)
+            .execute(&mut **transaction)
+            .await
+            .map_err(unavailable)?;
+        pruned = true;
+    }
+    Ok(pruned)
+}
+
+async fn insert_node_in_transaction(
+    transaction: &mut Transaction<'_, Postgres>,
+    subscription_id: &str,
+    node: &MihomoNodeConfig,
+) -> StoreResult<()> {
+    // 所有订阅写入已持有 runtime_settings 行锁，失效节点仍占用原端口，删除后才可复用
+    let port: i32 = sqlx::query_scalar(
+        "select port from generate_series(20000, 39999) as candidate(port)
+         where not exists(select 1 from mihomo_nodes n where n.listener_port = candidate.port)
+         order by port limit 1",
+    )
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(unavailable)?
+    .ok_or_else(invalid)?;
+    let node_id = format!("mihomo_node_{}", uuid::Uuid::now_v7().simple());
+    let proxy_id = format!("mihomo_proxy_{}", uuid::Uuid::now_v7().simple());
+    let proxy = gateway_core::account::OutboundProxy::parse(&format!("http://127.0.0.1:{port}"))
+        .map_err(|source| invalid().with_source(source))?;
+    sqlx::query(
+        "insert into outbound_proxies (id, name, proxy_url, enabled)
+         values ($1, $2, $3, true)",
+    )
+    .bind(&proxy_id)
+    .bind(&node.name)
+    .bind(proxy.expose_url())
+    .execute(&mut **transaction)
+    .await
+    .map_err(unavailable)?;
+    sqlx::query(
+        "insert into mihomo_nodes
+         (id, subscription_id, source_name, proxy_id, listener_port, kind, config_json)
+         values ($1, $2, $3, $4, $5, $6, $7)",
+    )
+    .bind(node_id)
+    .bind(subscription_id)
+    .bind(&node.name)
+    .bind(proxy_id)
+    .bind(port)
+    .bind(&node.kind)
+    .bind(Json(node.config.clone()))
+    .execute(&mut **transaction)
+    .await
+    .map_err(unavailable)?;
+    Ok(())
 }
 
 fn map_proxy_record(row: PgRow) -> StoreResult<MihomoNode> {
@@ -868,7 +951,11 @@ impl MihomoStore for PgMihomoRepository {
         .map_err(|source| store_error(invalid().with_source(source)))?;
         let rows = sqlx::query(
             "select id, listener_port, config_json from mihomo_nodes
-             where available order by subscription_id, lower(source_name), id",
+             where available
+                or exists(select 1 from provider_accounts a where a.outbound_proxy_id = mihomo_nodes.proxy_id)
+                or exists(select 1 from plugin_update_sources s where s.outbound_proxy_id = mihomo_nodes.proxy_id)
+                or exists(select 1 from plugin_artifacts p where p.outbound_proxy_id = mihomo_nodes.proxy_id)
+             order by subscription_id, lower(source_name), id",
         )
         .fetch_all(&mut *transaction)
         .await

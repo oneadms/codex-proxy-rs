@@ -1,6 +1,7 @@
 //! Mihomo 订阅读取与专属节点监听的宿主适配，不持有账号或配置数据库事实
 
 mod config;
+mod controller;
 mod runtime;
 mod subscription;
 

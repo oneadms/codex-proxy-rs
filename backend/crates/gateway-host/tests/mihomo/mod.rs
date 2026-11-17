@@ -9,6 +9,7 @@ use std::{
 
 use gateway_host::mihomo::{MihomoConfig, MihomoHost, MihomoNodeConfig, MihomoRuntimeNode};
 use serde_json::json;
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
 
 fn runtime(directory: &std::path::Path) -> MihomoHost {
@@ -191,7 +192,7 @@ async fn failed_committed_configuration_stops_previous_listener() {
 }
 
 #[tokio::test]
-async fn cancelled_application_closes_partial_listeners_and_replays_persisted_nodes() {
+async fn cancelled_reload_reconciles_persisted_nodes_without_restarting_the_child() {
     let directory = tempfile::tempdir().unwrap();
     let runtime = Arc::new(runtime(directory.path()));
     let sockets = [
@@ -230,13 +231,8 @@ async fn cancelled_application_closes_partial_listeners_and_replays_persisted_no
 
     applying.abort();
     assert!(applying.await.unwrap_err().is_cancelled());
-    tokio::time::timeout(Duration::from_secs(3), async {
-        while connects(candidate_port).await {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("cancelled candidate closes its listeners");
+    // 已交给子进程的重载可能继续完成，取消后必须重新确认持久快照，不能按旧确认状态跳过
+    assert!(connects(candidate_port).await);
     assert!(!connects(previous_port).await);
     std::fs::remove_file(delay).unwrap();
     runtime.apply(nodes).await.unwrap();
@@ -244,6 +240,111 @@ async fn cancelled_application_closes_partial_listeners_and_replays_persisted_no
     assert!(connects(delayed_port).await);
     assert!(!connects(previous_port).await);
     runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn reload_preserves_open_tunnels_during_node_changes_and_failures() {
+    let directory = tempfile::tempdir().unwrap();
+    let executable = std::env::var_os("CPR_TEST_MIHOMO_EXECUTABLE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_gateway-host-mihomo-worker")));
+    let runtime =
+        MihomoHost::new(MihomoConfig { executable }, directory.path().to_path_buf()).unwrap();
+    let upstream = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .unwrap();
+    let upstream_port = upstream.local_addr().unwrap().port();
+    let upstream_task = tokio::spawn(async move {
+        loop {
+            let (mut stream, _) = upstream.accept().await.unwrap();
+            tokio::spawn(async move {
+                let mut header = Vec::new();
+                loop {
+                    let byte = stream.read_u8().await.unwrap();
+                    header.push(byte);
+                    if header.ends_with(b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                assert!(header.starts_with(b"CONNECT "));
+                stream
+                    .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                    .await
+                    .unwrap();
+                let (mut reader, mut writer) = stream.split();
+                let _ = tokio::io::copy(&mut reader, &mut writer).await;
+            });
+        }
+    });
+    let stable = MihomoRuntimeNode {
+        id: "stable".to_owned(),
+        port: port(),
+        config: json!({
+            "type": "http", "server": "127.0.0.1", "port": upstream_port,
+        }),
+    };
+    runtime.apply(vec![stable.clone()]).await.unwrap();
+    let mut tunnel = tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, stable.port))
+        .await
+        .unwrap();
+    tunnel
+        .write_all(
+            b"CONNECT echo.example.invalid:443 HTTP/1.1\r\nHost: echo.example.invalid:443\r\n\r\n",
+        )
+        .await
+        .unwrap();
+    let mut header = Vec::new();
+    loop {
+        let byte = tokio::time::timeout(Duration::from_secs(3), tunnel.read_u8())
+            .await
+            .unwrap()
+            .unwrap();
+        header.push(byte);
+        if header.ends_with(b"\r\n\r\n") {
+            break;
+        }
+    }
+    assert!(header.starts_with(b"HTTP/1.1 200"));
+    let added = MihomoRuntimeNode {
+        id: "added".to_owned(),
+        port: port(),
+        config: stable.config.clone(),
+    };
+    runtime
+        .apply(vec![added.clone(), stable.clone()])
+        .await
+        .unwrap();
+    assert!(connects(added.port).await);
+    tunnel.write_all(b"after-add").await.unwrap();
+    let mut echoed = [0; 9];
+    tokio::time::timeout(Duration::from_secs(3), tunnel.read_exact(&mut echoed))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(&echoed, b"after-add");
+
+    let mut invalid = added.clone();
+    invalid.config["dialer-proxy"] = json!("unsupported");
+    assert!(runtime.apply(vec![stable.clone(), invalid]).await.is_err());
+    assert!(!connects(added.port).await);
+    tunnel.write_all(b"after-err").await.unwrap();
+    tokio::time::timeout(Duration::from_secs(3), tunnel.read_exact(&mut echoed))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(&echoed, b"after-err");
+
+    runtime.apply(vec![stable]).await.unwrap();
+    tunnel.write_all(b"after-del").await.unwrap();
+    tokio::time::timeout(Duration::from_secs(3), tunnel.read_exact(&mut echoed))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(&echoed, b"after-del");
+    drop(tunnel);
+    runtime.shutdown().await;
+    upstream_task.abort();
+    let _ = upstream_task.await;
 }
 
 #[tokio::test]
