@@ -109,11 +109,15 @@ WORKDIR /src
 ADD --checksum=sha256:db0cc4145fe4024e9c2386bd4768bf23a69c8789610d56d7243819e2f77c0cfe \
     https://codeload.github.com/MetaCubeX/mihomo/tar.gz/0455d0d28c4526937380505153e65a843d8612e8 /tmp/mihomo.tar.gz
 RUN tar -xzf /tmp/mihomo.tar.gz --strip-components=1 -C /src
+COPY deploy/mihomo/session.patch /tmp/anytls-session.patch
+COPY deploy/mihomo/keepalive.go deploy/mihomo/keepalive_test.go /src/transport/anytls/session/
+RUN git apply --check /tmp/anytls-session.patch && git apply /tmp/anytls-session.patch
 ARG TARGETARCH
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     go get github.com/klauspost/compress@v1.18.7 \
         golang.org/x/crypto@v0.58.0 golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0 \
+    && go test -race -count=1 ./transport/anytls/session \
     && CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -mod=readonly \
         -tags with_gvisor -trimpath \
         -ldflags '-s -w -X github.com/metacubex/mihomo/constant.Version=v1.19.34-cpr' \

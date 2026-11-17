@@ -960,7 +960,9 @@ docker compose -f deploy/compose.yaml build codex-proxy-rs
 
 镜像使用 `runtime-custom` 构建目标，基于 Mihomo `v1.19.34` 的固定源码提交构建 Core，
 使用修复版本的压缩与 `golang.org/x` 依赖，版本标记为 `v1.19.34-cpr`。节点监听与网关共享
-Pod 回环网络，运行配置保存在现有 `cpr-data` 卷。流水线沿用 PostgreSQL、Redis、配置
+Pod 回环网络，运行配置保存在现有 `cpr-data` 卷。此 Core 对有活动流的 AnyTLS 会话每两秒
+发送协议心跳，维持等待响应期间的代理连接；空闲池仍按原有策略回收。补丁及回归测试位于
+`deploy/mihomo/`，构建时应用并验证。流水线沿用 PostgreSQL、Redis、配置
 Secret、PVC、ClusterIP 和 Nginx，不重新安装集群或修改域名入口
 
 GitHub 仓库的 `production` Environment 只允许 `custom/main`，配置如下：

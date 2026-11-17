@@ -1,3 +1,7 @@
 # SQLx migration checksums are byte-sensitive; keep migration inputs portable across hosts.
 backend/migrations/*.sql text eol=lf
 backend/migrations/.frozen-sha256 text eol=lf
+
+# 补丁上下文中的前导空格属于 diff 语法，源码格式由 gofmt 检查
+deploy/mihomo/*.patch text eol=lf -whitespace
+deploy/mihomo/*.go text eol=lf

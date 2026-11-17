@@ -1,0 +1,54 @@
+--- a/transport/anytls/session/session.go
++++ b/transport/anytls/session/session.go
+@@ -94,6 +94,7 @@
+ 	s.writeControlFrame(f)
+ 
+ 	go s.recvLoop()
++	go s.keepAlive()
+ }
+ 
+ // IsClosed does a safe check to see if we have shutdown
+@@ -155,7 +156,9 @@
+ 		return nil, err
+ 	}
+ 
++	s.connLock.Lock()
+ 	s.buffering = false // proxy Write it's SocksAddr to flush the buffer
++	s.connLock.Unlock()
+ 
+ 	s.streamLock.Lock()
+ 	defer s.streamLock.Unlock()
+@@ -428,24 +431,28 @@
+ 	binary.BigEndian.PutUint16(buffer.Extend(2), uint16(dataLen))
+ 	buffer.Write(frame.data)
+ 
++	// 心跳与业务控制帧共用写锁，防止并发写入互相清除超时
++	s.connLock.Lock()
+ 	s.conn.SetWriteDeadline(time.Now().Add(time.Second * 5))
+-
+-	_, err := s.writeConn(buffer.Bytes())
++	_, err := s.writeConnLocked(buffer.Bytes())
++	s.conn.SetWriteDeadline(time.Time{})
++	s.connLock.Unlock()
+ 	buffer.Release()
+ 	if err != nil {
+ 		s.Close()
+ 		return 0, err
+ 	}
+ 
+-	s.conn.SetWriteDeadline(time.Time{})
+-
+ 	return dataLen, nil
+ }
+ 
+ func (s *Session) writeConn(b []byte) (n int, err error) {
+ 	s.connLock.Lock()
+ 	defer s.connLock.Unlock()
+-
++	return s.writeConnLocked(b)
++}
++
++func (s *Session) writeConnLocked(b []byte) (n int, err error) {
+ 	if s.buffering {
+ 		s.buffer = append(s.buffer, b...)
+ 		return len(b), nil
