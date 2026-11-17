@@ -169,6 +169,15 @@ async fn missing_identity_is_stable_across_transports_and_advances_only_the_turn
         ] {
             assert_eq!(metadata[field], body_metadata[field]);
         }
+        for (flat, nested) in [
+            ("x-codex-installation-id", "installation_id"),
+            ("session_id", "session_id"),
+            ("thread_id", "thread_id"),
+            ("turn_id", "turn_id"),
+            ("x-codex-window-id", "window_id"),
+        ] {
+            assert_eq!(body["client_metadata"][flat], metadata[nested]);
+        }
         assert_eq!(
             metadata["session_id"],
             headers["session-id"].to_str().unwrap()
@@ -252,6 +261,61 @@ async fn partial_metadata_keeps_client_turn_and_extensions_while_filling_missing
         .unwrap();
         assert_eq!(metadata["turn_id"], body_metadata["turn_id"]);
         assert_eq!(metadata["future"], body_metadata["future"]);
+        assert_eq!(body["client_metadata"]["turn_id"], "client-turn");
+        assert_eq!(
+            body["client_metadata"]["x-codex-window-id"],
+            metadata["window_id"]
+        );
+    }
+}
+
+#[tokio::test]
+async fn client_metadata_projects_logical_identity_without_replacing_routing_headers() {
+    let store = Arc::new(MemoryAccountStore::default());
+    create_account(&store, "acct_provider_contract").await;
+    let original = json!({
+        "session_id":"logical-session", "thread_id":"logical-thread", "turn_id":"client-turn",
+        "window_id":"logical-window", "future":{"keep":true}
+    });
+    for websocket in [false, true] {
+        let (headers, body) = capture(
+            &store,
+            json!({"input":"question", "client_metadata":{
+                "x-codex-turn-metadata": original.to_string(), "future":"keep"
+            }}),
+            Map::from_iter([
+                ("session_id".to_owned(), json!("routing-session")),
+                ("thread_id".to_owned(), json!("routing-thread")),
+            ]),
+            websocket,
+            "req_logical_metadata",
+            "key_openai_contract",
+        )
+        .await;
+        let metadata = &body["client_metadata"];
+        let nested: Value =
+            serde_json::from_str(metadata["x-codex-turn-metadata"].as_str().unwrap()).unwrap();
+        for (field, original) in [
+            ("session_id", "logical-session"),
+            ("thread_id", "logical-thread"),
+        ] {
+            assert_scoped_id(metadata[field].as_str().unwrap(), original);
+            assert_eq!(metadata[field], nested[field]);
+        }
+        assert_scoped_id(headers["session-id"].to_str().unwrap(), "routing-session");
+        assert_scoped_id(headers["thread-id"].to_str().unwrap(), "routing-thread");
+        assert_ne!(
+            metadata["session_id"],
+            headers["session-id"].to_str().unwrap()
+        );
+        assert_ne!(
+            metadata["thread_id"],
+            headers["thread-id"].to_str().unwrap()
+        );
+        assert_eq!(metadata["turn_id"], "client-turn");
+        assert_eq!(metadata["x-codex-window-id"], nested["window_id"]);
+        assert_eq!(metadata["future"], "keep");
+        assert_eq!(nested["future"], original["future"]);
     }
 }
 
@@ -348,4 +412,7 @@ async fn responses_api_key_requests_do_not_gain_codex_session_metadata() {
             .get("x-codex-turn-metadata")
             .is_none()
     );
+    for field in ["session_id", "thread_id", "turn_id", "x-codex-window-id"] {
+        assert!(body["client_metadata"].get(field).is_none());
+    }
 }

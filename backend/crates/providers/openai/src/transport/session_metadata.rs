@@ -20,7 +20,7 @@ pub(crate) fn complete_session_metadata(
         .and_then(|metadata| metadata.get("x-codex-turn-metadata"))
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let metadata: Option<Value> = request
+    let supplied_metadata: Option<Value> = request
         .turn_metadata
         .as_deref()
         .or(body_metadata.as_deref())
@@ -28,7 +28,7 @@ pub(crate) fn complete_session_metadata(
     let supplied_window_id = request
         .client_metadata()
         .and_then(|metadata| metadata.get("x-codex-window-id"))
-        .or_else(|| metadata.as_ref()?.get("window_id"))
+        .or_else(|| supplied_metadata.as_ref()?.get("window_id"))
         .and_then(Value::as_str)
         .map(str::to_owned);
     let anchor = request
@@ -60,7 +60,7 @@ pub(crate) fn complete_session_metadata(
         .client_turn_id
         .clone()
         .or_else(|| {
-            metadata
+            supplied_metadata
                 .as_ref()?
                 .get("turn_id")?
                 .as_str()
@@ -108,6 +108,22 @@ pub(crate) fn complete_session_metadata(
     }
     let header_metadata = request.turn_metadata.clone();
     if let Some(Value::Object(metadata)) = request.body_mut().get_mut("client_metadata") {
+        // 官方 client_metadata 单独投影逻辑身份；session-id 可能另作缓存路由，不能反向覆盖
+        for (target, source) in [
+            ("session_id", "session_id"),
+            ("thread_id", "thread_id"),
+            ("turn_id", "turn_id"),
+            ("x-codex-window-id", "window_id"),
+        ] {
+            let value = supplied_metadata
+                .as_ref()
+                .and_then(|metadata| metadata.get(source))
+                .filter(|value| value.is_string())
+                .unwrap_or(&defaults[source]);
+            metadata
+                .entry(target.to_owned())
+                .or_insert_with(|| value.clone());
+        }
         if let Some(raw) = header_metadata {
             metadata
                 .entry("x-codex-turn-metadata".to_owned())

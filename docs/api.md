@@ -538,7 +538,10 @@ Images 的 `x-codex-image-turn-id` 和 Desktop 自动 Git 上下文的 `clientUs
 输入项元数据保持不变。Search 的会话 `id` 按同一安装身份域映射，只替换该值的原始字节，其余正文保持不变。
 `prompt_cache_key` 同样按安装身份映射，保留同一身份内的缓存共享关系。
 选中 Codex OAuth 账号后，缺失的会话、线程、窗口和轮次身份在出站副本中补齐，
-HTTP 请求头与 WS 的 `client_metadata["x-codex-turn-metadata"]` 使用一致的身份字段。
+HTTP 与 WS 的 `client_metadata` 均补齐 `session_id`、`thread_id`、`turn_id`、
+`x-codex-window-id`，并携带账号安装 UUID 的 `x-codex-installation-id`。
+`x-codex-turn-metadata` 保留完整轮次元数据；独立会话字段优先复用其中的逻辑身份，
+与仅作缓存路由的 `session-id` 请求头分别保留，未提供逻辑身份时使用补齐后的值。
 客户端已有值及 metadata 扩展保留，缺少 `prompt_cache_key` 时使用补齐后的会话 ID。
 缺少显式会话身份时，锚点优先使用客户端对话或缓存键，再复用当前入站 WS 连接，
 其次使用本地对话锚点或对话开头；均缺失时按本次请求隔离。
