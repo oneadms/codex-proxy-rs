@@ -1,3 +1,5 @@
+export { testAccountConnection } from './connection-test'
+
 export {
   completeAccountOAuth,
   createAccountImportTask,

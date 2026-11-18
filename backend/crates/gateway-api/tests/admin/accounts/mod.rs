@@ -588,11 +588,12 @@ mod actions {
         },
     };
     use gateway_api::admin::accounts::{
-        AccountActionRequest, AccountConnectionTestEvent, AccountDeletionData,
-        AccountDeletionRequest, AccountExportData, AccountExportQuery, AccountIdQuery,
-        AccountImportData, AccountImportRequest, AccountMutationData, AccountRefreshRequest,
-        AccountResetCreditConsumeRequest, AccountTestQuery, CompleteAccountAuthorizationRequest,
-        StartAccountAuthorizationRequest, UpdateAccountRequest,
+        AccountActionRequest, AccountConnectionTestEvent, AccountConnectionTestRequest,
+        AccountDeletionData, AccountDeletionRequest, AccountExportData, AccountExportQuery,
+        AccountIdQuery, AccountImportData, AccountImportRequest, AccountMutationData,
+        AccountRefreshRequest, AccountResetCreditConsumeRequest,
+        CompleteAccountAuthorizationRequest, StartAccountAuthorizationRequest,
+        UpdateAccountRequest,
     };
     use gateway_core::{
         account::ProviderAccountId, engine::probe::AccountProbeErrorSource,
@@ -916,13 +917,16 @@ mod actions {
     }
 
     #[test]
-    fn connection_test_should_require_model_in_query() {
-        let query: AccountTestQuery = serde_json::from_value(json!({
-            "accountId": "acct_1",
-            "modelId": " "
-        }))
-        .expect("decode connection test query");
-        assert_eq!(query.validate().unwrap_err().field(), "modelId");
+    fn connection_test_should_reject_a_blank_model_or_prompt() {
+        for (model, prompt, field) in [(" ", "Say OK", "modelId"), ("grok-4.5", " \n", "prompt")] {
+            let request: AccountConnectionTestRequest = serde_json::from_value(json!({
+                "accountId": "acct_1",
+                "modelId": model,
+                "prompt": prompt,
+            }))
+            .expect("decode connection test request");
+            assert_eq!(request.validate().unwrap_err().field(), field);
+        }
     }
 
     #[test]

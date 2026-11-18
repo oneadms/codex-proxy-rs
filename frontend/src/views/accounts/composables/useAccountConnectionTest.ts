@@ -1,20 +1,20 @@
 import type { Account, AccountModelsResponse } from '@/api'
 import { CheckCircle2, Clock3, Wifi, XCircle } from '@lucide/vue'
-import { useEventSource } from '@vueuse/core'
 
 import { clamp } from 'es-toolkit'
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
-import { getAccountModels, refreshAccountModels } from '@/api'
-import { API_BASE_URL } from '@/api/constants'
+import { getAccountModels, refreshAccountModels, testAccountConnection } from '@/api'
+import { ApiError } from '@/api/request'
 import { useIdSet } from '@/composables/useIdSet'
 import { useRequestState } from '@/composables/useRequestState'
 import { t } from '@/i18n'
+import { useUiStore } from '@/stores/modules/ui'
 import { notification as ZNotification } from '@/utils/notification'
-import { errorMessage, withMinimumDuration } from '@/utils/operation'
+import { errorMessage } from '@/utils/operation'
 
 interface ConnectionTestRun {
   accountId: string
-  resolve: () => void
+  controller: AbortController
 }
 
 type ConnectionTestStatus = 'idle' | 'running' | 'success' | 'error'
@@ -170,6 +170,7 @@ function connectionTestFailureDiagnostics(event: ConnectionTestFailureEvent) {
 }
 
 export function useAccountConnectionTest(options: { reload: () => Promise<unknown> }) {
+  const ui = useUiStore()
   const showConnectionTestModal = shallowRef(false)
   const testingAccount = shallowRef<Account | null>(null)
   const connectionTestStatus = shallowRef<ConnectionTestStatus>('idle')
@@ -187,21 +188,10 @@ export function useAccountConnectionTest(options: { reload: () => Promise<unknow
   const refreshingConnectionTestModels = computed(() => modelsRequest.loading.value && modelsRequestMode.value === 'refresh')
   const connectionTestSelectedModel = shallowRef('')
   const connectionTestModelOptions = ref<ConnectionTestModelOption[]>([])
-  const connectionTestStreamUrl = shallowRef<string>()
-  const {
-    data: connectionTestStreamMessage,
-    error: connectionTestStreamError,
-    eventSource: connectionTestEventSource,
-    open: openConnectionTestEventSource,
-    close: closeConnectionTestEventSource,
-  } = useEventSource(connectionTestStreamUrl, [], {
-    autoConnect: false,
-    immediate: false,
-    withCredentials: true,
-    serializer: {
-      read: raw => ({ raw }),
-    },
-  })
+  const connectionTestPrompt = shallowRef('')
+  const canSaveDefaultPrompt = computed(() =>
+    Boolean(connectionTestPrompt.value.trim()) && connectionTestPrompt.value !== ui.accountConnectionTestPrompt,
+  )
 
   let connectionTestStartedAtMs = 0
   let connectionTestRun: ConnectionTestRun | undefined
@@ -244,13 +234,23 @@ export function useAccountConnectionTest(options: { reload: () => Promise<unknow
   })
 
   function openConnectionTest(account: Account) {
-    abortConnectionTest()
+    clearConnectionTestRun()
     testingAccount.value = account
     connectionTestSelectedModel.value = ''
     connectionTestModelOptions.value = []
+    connectionTestPrompt.value = ui.accountConnectionTestPrompt
     showConnectionTestModal.value = true
     resetConnectionTest()
     void loadConnectionTestModels(account)
+  }
+
+  function saveDefaultPrompt() {
+    if (!canSaveDefaultPrompt.value)
+      return
+    ui.accountConnectionTestPrompt = connectionTestPrompt.value
+    ZNotification.success({
+      message: t('accounts.connectionTest.defaultPromptSaved'),
+    })
   }
 
   function resetConnectionTest() {
@@ -341,19 +341,11 @@ export function useAccountConnectionTest(options: { reload: () => Promise<unknow
 
   function clearConnectionTestRun() {
     const run = connectionTestRun
+    if (!run)
+      return
     connectionTestRun = undefined
-    closeConnectionTestEventSource()
-    if (run) {
-      testingConnections.remove(run.accountId)
-      run.resolve()
-    }
-  }
-
-  function failConnectionTest(message = t('accounts.connectionTest.errors.failed')) {
-    if (connectionTestStatus.value === 'running') {
-      recordConnectionTestFailure('failure', t('accounts.connectionTest.failed'), message)
-    }
-    clearConnectionTestRun()
+    run.controller.abort()
+    testingConnections.remove(run.accountId)
   }
 
   function recordConnectionTestFailure(
@@ -424,10 +416,6 @@ export function useAccountConnectionTest(options: { reload: () => Promise<unknow
     }
   }
 
-  function abortConnectionTest() {
-    clearConnectionTestRun()
-  }
-
   async function loadConnectionTestModels(account = testingAccount.value, refresh = false) {
     if (!account?.id || !showConnectionTestModal.value || account.id !== testingAccount.value?.id)
       return
@@ -486,74 +474,58 @@ export function useAccountConnectionTest(options: { reload: () => Promise<unknow
   }
 
   async function handleTestConnection(account = testingAccount.value) {
-    if (!account?.id)
+    const prompt = connectionTestPrompt.value
+    if (!account?.id || !prompt.trim() || testingConnections.has(account.id))
       return
-    if (!connectionTestSelectedModel.value) {
+    const modelId = connectionTestSelectedModel.value
+    if (!modelId) {
       connectionTestError.value = t('accounts.connectionTest.errors.modelRequired')
       return
     }
-    if (testingConnections.has(account.id))
-      return
-    abortConnectionTest()
+    clearConnectionTestRun()
+    resetConnectionTest()
     connectionTestStatus.value = 'running'
-    connectionTestModel.value = ''
-    connectionTestContent.value = ''
-    connectionTestLogs.value = []
-    connectionTestError.value = ''
-    connectionTestDurationMs.value = null
-    connectionTestModel.value = connectionTestSelectedModel.value
+    connectionTestModel.value = modelId
     connectionTestStartedAtMs = performance.now()
-    connectionTestStartedAt.value = ''
-    connectionTestFinishedAt.value = ''
+    const run = {
+      accountId: account.id,
+      controller: new AbortController(),
+    }
+    connectionTestRun = run
     testingConnections.add(account.id)
     try {
-      await withMinimumDuration(
-        () =>
-          new Promise<void>((resolve) => {
-            connectionTestRun = {
-              accountId: account.id,
-              resolve,
-            }
-            const params = new URLSearchParams({
-              accountId: account.id,
-              modelId: connectionTestSelectedModel.value,
-            })
-            connectionTestStreamUrl.value
-              = `${API_BASE_URL}/api/admin/accounts/connection-test?${params}`
-            openConnectionTestEventSource()
-            if (!connectionTestEventSource.value)
-              failConnectionTest(t('accounts.connectionTest.errors.browserUnsupported'))
-          }),
-      )
-      if (connectionTestStatus.value === 'running') {
+      for await (const raw of testAccountConnection({ accountId: account.id, modelId, prompt }, run.controller.signal)) {
+        if (connectionTestRun !== run)
+          return
+        try {
+          const event = parseConnectionTestEvent(raw)
+          if (event)
+            handleConnectionTestEvent(event)
+        }
+        catch {
+          recordConnectionTestFailure('failure', t('accounts.connectionTest.failed'), t('accounts.connectionTest.errors.invalidResponse'))
+          return
+        }
+        if (connectionTestRun !== run)
+          return
+      }
+      if (connectionTestRun === run) {
         recordConnectionTestFailure('failure', t('accounts.connectionTest.failed'), t('accounts.connectionTest.errors.missingCompletion'))
       }
     }
     catch (error: unknown) {
-      recordConnectionTestFailure('failure', t('accounts.connectionTest.failed'), errorMessage(error, t('accounts.connectionTest.errors.failed')))
+      if (connectionTestRun === run) {
+        const message = error instanceof ApiError
+          ? error.message
+          : t('accounts.connectionTest.errors.disconnected')
+        recordConnectionTestFailure('failure', t('accounts.connectionTest.failed'), message)
+      }
     }
     finally {
-      clearConnectionTestRun()
+      if (connectionTestRun === run)
+        clearConnectionTestRun()
     }
   }
-
-  watch(connectionTestStreamMessage, (message) => {
-    if (!message?.raw || !connectionTestRun)
-      return
-    try {
-      const event = parseConnectionTestEvent(message.raw)
-      if (event)
-        handleConnectionTestEvent(event)
-    }
-    catch {
-      failConnectionTest(t('accounts.connectionTest.errors.invalidResponse'))
-    }
-  })
-
-  watch(connectionTestStreamError, (error) => {
-    if (error && connectionTestRun)
-      failConnectionTest(t('accounts.connectionTest.errors.disconnected'))
-  })
 
   watch([
     showConnectionTestModal,
@@ -561,13 +533,11 @@ export function useAccountConnectionTest(options: { reload: () => Promise<unknow
   ], ([open]) => {
     modelsRequest.invalidate({ resetLoading: open })
     if (!open) {
-      abortConnectionTest()
+      clearConnectionTestRun()
     }
   }, { flush: 'sync' })
 
-  onBeforeUnmount(() => {
-    abortConnectionTest()
-  })
+  onBeforeUnmount(clearConnectionTestRun)
 
   return {
     showConnectionTestModal,
@@ -584,7 +554,10 @@ export function useAccountConnectionTest(options: { reload: () => Promise<unknow
     refreshingConnectionTestModels,
     connectionTestSelectedModel,
     connectionTestModelOptions,
+    connectionTestPrompt,
     connectionTestStatusView,
+    canSaveDefaultPrompt,
+    saveDefaultPrompt,
     openConnectionTest,
     handleRefreshConnectionTestModels,
     handleTestConnection,

@@ -66,7 +66,7 @@ where
         )
         .route(
             "/api/admin/accounts/connection-test",
-            get(test_account_connection::<S>),
+            post(test_account_connection::<S>),
         )
         .route(
             "/api/admin/accounts/oauth/start",
@@ -618,19 +618,20 @@ where
 async fn test_account_connection<S>(
     _auth: AdminAuth,
     State(state): State<S>,
-    AdminQuery(query): AdminQuery<AccountTestQuery>,
+    AdminJson(request): AdminJson<AccountConnectionTestRequest>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, AdminError>
 where
     S: SessionState + Send + Sync,
 {
     let time = crate::time::TimePresenter::new(state.admin_services().timezone());
-    let (account_id, upstream_model) = query.into_command().map_err(map_wire_error)?;
+    let (account_id, upstream_model, prompt) = request.into_command().map_err(map_wire_error)?;
     let stream = state
         .admin_services()
         .accounts()
         .test_connection(
             AccountProbeTarget::ConnectionTest(account_id),
             upstream_model,
+            prompt,
         )
         .await
         .map_err(map_service_error)?

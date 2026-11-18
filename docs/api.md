@@ -1233,7 +1233,7 @@ config 返回 `{ name, plaintextKey }`，仅读取服务端会话绑定的当前
 | `GET` | `/api/admin/accounts/models` | `accountId` | 优先读取 Provider 模型目录缓存，缺失时有限实时拉取；返回 `{ models, observedAt, observedAtDisplay }` |
 | `GET` | `/api/admin/accounts/models/catalog` | `accountId` | 读取指定账号的完整 Codex 原生模型目录，返回 `{ modelCount, observedAt, catalog }` |
 | `POST` | `/api/admin/accounts/models/refresh` | `{ accountId }` | 强制拉取最新模型并覆盖缓存，响应结构与模型目录查询相同 |
-| `GET` | `/api/admin/accounts/connection-test` | `accountId`、`modelId` | 通过 SSE 返回实时连接测试事件，不作为业务 Responses 用量记录 |
+| `POST` | `/api/admin/accounts/connection-test` | `{ accountId, modelId, prompt? }` | 通过 SSE 返回实时连接测试事件，不作为业务 Responses 用量记录 |
 | `POST` | `/api/admin/accounts/oauth/start` | `{ provider, name, accountId?, outboundProxyId?, outboundProxyUrl? }` | 为支持登录的 Provider 创建 flow；`accountId` 表示重新授权 |
 | `POST` | `/api/admin/accounts/oauth/complete` | `{ provider, flowId, callbackUrl, settings? }` | 消费 OAuth callback；首次授权可附带账号设置，重新授权保留原设置 |
 
@@ -1557,8 +1557,11 @@ OAuth 等待回调期间不持有保护；提交仍拒绝已删除或连接配�
 
 ### 账号连接测试 SSE
 
-`GET /api/admin/accounts/connection-test` 固定探测请求指定的账号，采用当前全局客户端身份，不参与普通账号轮换。成功流沿用
-`test_start`、`request`、`content`、`test_complete` 事件；失败事件为：
+`POST /api/admin/accounts/connection-test` 固定探测请求指定的账号，采用当前全局客户端身份，不参与普通账号轮换。
+JSON 正文中的 `prompt` 原样作为测试输入，省略时使用 `Reply with exactly OK.`，不接受空字符串或纯空白。
+`request` 事件显示本次使用的提示词
+
+成功流包含 `test_start`、`request`、`content`、`test_complete` 事件；失败事件为：
 
 ```json
 {

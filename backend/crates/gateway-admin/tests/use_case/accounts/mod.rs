@@ -1329,6 +1329,62 @@ fn provider_registry_should_reject_duplicate_kind() {
 }
 
 #[tokio::test]
+async fn connection_test_should_send_the_requested_prompt_or_default() {
+    struct EchoPromptProbe;
+
+    impl AccountProbe for EchoPromptProbe {
+        fn probe(
+            &self,
+            request: AccountProbeRequest,
+            _: Option<Arc<gateway_core::routing::RuntimeSnapshot>>,
+        ) -> BoxFuture<'_, Result<AccountProbeResult, AccountProbeError>> {
+            Box::pin(async move {
+                let Operation::Generate(operation) = request.operation else {
+                    panic!("connection test must generate a response");
+                };
+                let input = operation.protocol_payload().body()["input"]
+                    .as_str()
+                    .expect("provider prompt");
+                Ok(AccountProbeResult {
+                    text: vec![input.to_owned()],
+                })
+            })
+        }
+    }
+
+    let provider = FakeProviderAdmin::new("xai", events());
+    let store = FakeAccountStore::new("xai", events());
+    let services = accounts_service_with_probe(provider, store, Arc::new(EchoPromptProbe)).await;
+    let custom = "  请回复 OK\n保留换行  ";
+
+    for (prompt, expected) in [(Some(custom), custom), (None, "Reply with exactly OK.")] {
+        let events = services
+            .accounts()
+            .test_connection(
+                AccountProbeTarget::ConnectionTest(
+                    ProviderAccountId::new("acct_test").expect("account ID"),
+                ),
+                gateway_core::routing::UpstreamModelId::new("grok-4.5").expect("model"),
+                prompt.map(ToOwned::to_owned),
+            )
+            .await
+            .expect("connection test stream")
+            .collect::<Vec<_>>()
+            .await;
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                AccountConnectionTestEvent::Started { .. },
+                AccountConnectionTestEvent::Request { input_text, .. },
+                AccountConnectionTestEvent::Content { text },
+                AccountConnectionTestEvent::Completed,
+            ] if input_text == expected && text == expected
+        ));
+    }
+}
+
+#[tokio::test]
 async fn connection_test_should_probe_unavailable_account() {
     let provider = FakeProviderAdmin::new("xai", events());
     let mut account = account_record("xai");
@@ -1348,6 +1404,7 @@ async fn connection_test_should_probe_unavailable_account() {
                 ProviderAccountId::new("acct_test").expect("account ID"),
             ),
             gateway_core::routing::UpstreamModelId::new("grok-4.5").expect("model"),
+            None,
         )
         .await
         .expect("connection test stream")
@@ -1387,6 +1444,7 @@ async fn connection_test_rate_limited_probe_returns_provider_failure() {
                 ProviderAccountId::new("acct_test").expect("account ID"),
             ),
             gateway_core::routing::UpstreamModelId::new("grok-4.5").expect("model"),
+            None,
         )
         .await
         .expect("connection test stream")
@@ -1422,6 +1480,7 @@ async fn connection_test_should_preserve_disabled_account_status() {
                 ProviderAccountId::new("acct_test").expect("account ID"),
             ),
             gateway_core::routing::UpstreamModelId::new("grok-4.5").expect("model"),
+            None,
         )
         .await
         .expect("connection test stream")

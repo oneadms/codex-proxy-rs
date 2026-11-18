@@ -148,7 +148,10 @@ const {
   refreshingConnectionTestModels,
   connectionTestSelectedModel,
   connectionTestModelOptions,
+  connectionTestPrompt,
   connectionTestStatusView,
+  canSaveDefaultPrompt,
+  saveDefaultPrompt,
   openConnectionTest,
   handleRefreshConnectionTestModels,
   handleTestConnection,
@@ -394,7 +397,9 @@ const {
     <AccountConnectionTestModal
       v-model="showConnectionTestModal"
       v-model:selected-model="connectionTestSelectedModel"
+      v-model:prompt="connectionTestPrompt"
       :account="testingAccount"
+      :can-save-default-prompt="canSaveDefaultPrompt"
       :duration-ms="connectionTestDurationMs"
       :error="connectionTestError"
       :finished-at="connectionTestFinishedAt"
@@ -407,6 +412,7 @@ const {
       :status="connectionTestStatus"
       :status-view="connectionTestStatusView"
       @refresh-models="handleRefreshConnectionTestModels()"
+      @save-default-prompt="saveDefaultPrompt"
       @test="handleTestConnection()"
     />
 

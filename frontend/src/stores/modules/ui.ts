@@ -5,6 +5,7 @@ export const useUiStore = defineStore(
   'ui',
   () => {
     const sidebarCollapsed = shallowRef(false)
+    const accountConnectionTestPrompt = shallowRef('Reply with exactly OK.')
 
     function toggleSidebar(): void {
       sidebarCollapsed.value = !sidebarCollapsed.value
@@ -12,13 +13,14 @@ export const useUiStore = defineStore(
 
     return {
       sidebarCollapsed,
+      accountConnectionTestPrompt,
       toggleSidebar,
     }
   },
   {
     persist: {
       key: 'codex-proxy-rs-ui',
-      pick: ['sidebarCollapsed'],
+      pick: ['sidebarCollapsed', 'accountConnectionTestPrompt'],
     },
   },
 )

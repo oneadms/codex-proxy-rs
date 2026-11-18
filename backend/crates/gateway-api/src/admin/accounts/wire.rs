@@ -708,31 +708,40 @@ impl AccountRefreshRequest {
     }
 }
 
-/// 连接测试 query；测试仍经唯一 Core/Provider 模型请求路径执行
+/// 手动连接测试请求，提示词随本次探测发送
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct AccountTestQuery {
+pub struct AccountConnectionTestRequest {
     pub account_id: String,
     pub model_id: String,
+    pub prompt: Option<String>,
 }
 
-impl AccountTestQuery {
+impl AccountConnectionTestRequest {
     pub fn validate(&self) -> Result<(), WireValidationError> {
         require_account_id(&self.account_id, "accountId")?;
         if self.model_id.trim().is_empty() || self.model_id.chars().any(char::is_control) {
             return Err(WireValidationError::new("modelId"));
+        }
+        if self
+            .prompt
+            .as_ref()
+            .is_some_and(|prompt| prompt.trim().is_empty())
+        {
+            return Err(WireValidationError::new("prompt"));
         }
         Ok(())
     }
 
     pub(super) fn into_command(
         self,
-    ) -> Result<(ProviderAccountId, UpstreamModelId), WireValidationError> {
+    ) -> Result<(ProviderAccountId, UpstreamModelId, Option<String>), WireValidationError> {
         self.validate()?;
         Ok((
             ProviderAccountId::new(self.account_id)
                 .map_err(|_| WireValidationError::new("accountId"))?,
             UpstreamModelId::new(self.model_id).map_err(|_| WireValidationError::new("modelId"))?,
+            self.prompt,
         ))
     }
 }

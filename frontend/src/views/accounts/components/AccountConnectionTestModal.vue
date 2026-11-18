@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { useAccountConnectionTest } from '../composables/useAccountConnectionTest'
 
-import { ZButton, ZDialog, ZIconButton, ZSelect } from '@codex-proxy/ui'
+import { ZButton, ZDialog, ZIconButton, ZSelect, ZTextarea } from '@codex-proxy/ui'
 
 import { RefreshCw } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
@@ -21,11 +21,13 @@ defineProps<{
   refreshingModels: boolean
   modelOptions: ConnectionTest['connectionTestModelOptions']['value']
   statusView: ConnectionTest['connectionTestStatusView']['value']
+  canSaveDefaultPrompt: boolean
 }>()
 
 const emit = defineEmits<{
   test: []
   refreshModels: []
+  saveDefaultPrompt: []
 }>()
 
 const { t } = useI18n({ useScope: 'global' })
@@ -34,6 +36,7 @@ type ConnectionTest = ReturnType<typeof useAccountConnectionTest>
 
 const open = defineModel<boolean>({ default: false })
 const selectedModel = defineModel<string>('selectedModel', { required: true })
+const prompt = defineModel<string>('prompt', { required: true })
 
 function connectionLogClass(tone: string) {
   if (tone === 'success')
@@ -100,6 +103,29 @@ function connectionLogClass(tone: string) {
             :disabled="status === 'running' || loadingModels || refreshingModels"
             :placeholder="loadingModels ? t('accounts.connectionTest.loadingModels') : t('accounts.connectionTest.modelPlaceholder')"
             :empty-text="t('accounts.connectionTest.noModels')"
+          />
+        </div>
+        <div class="mt-3 grid gap-2">
+          <div class="flex min-h-8 items-center justify-between gap-3">
+            <span class="text-z-sm font-heavy text-z-text-quaternary">
+              {{ t('accounts.connectionTest.prompt') }}
+            </span>
+            <ZButton
+              type="primary"
+              variant="link"
+              size="small"
+              :disabled="status === 'running' || !canSaveDefaultPrompt"
+              @click="emit('saveDefaultPrompt')"
+            >
+              {{ t('accounts.connectionTest.saveDefaultPrompt') }}
+            </ZButton>
+          </div>
+          <ZTextarea
+            v-model="prompt"
+            :aria-label="t('accounts.connectionTest.prompt')"
+            :rows="3"
+            :disabled="status === 'running'"
+            :placeholder="t('accounts.connectionTest.promptPlaceholder')"
           />
         </div>
       </section>
@@ -216,10 +242,10 @@ function connectionLogClass(tone: string) {
       <ZButton
         type="primary"
         :loading="status === 'running'"
-        :disabled="!account || loadingModels || refreshingModels || !selectedModel"
+        :disabled="!account || loadingModels || refreshingModels || !selectedModel || !prompt.trim()"
         @click="emit('test')"
       >
-        {{ logs.length > 0 || error ? t('accounts.connectionTest.retry') : t('accounts.connectionTest.start') }}
+        {{ logs.length > 0 || error ? t('accounts.connectionTest.retry') : t('accounts.connectionTest.title') }}
       </ZButton>
     </template>
   </ZDialog>

@@ -180,6 +180,7 @@ pub trait AccountsService: Send + Sync {
         &self,
         target: AccountProbeTarget,
         upstream_model: UpstreamModelId,
+        prompt: Option<String>,
     ) -> Result<AccountConnectionTestEventStream, AdminError>;
 }
 
@@ -1211,12 +1212,14 @@ impl AccountsService for DefaultAccountsService {
         &self,
         target: AccountProbeTarget,
         upstream_model: UpstreamModelId,
+        prompt: Option<String>,
     ) -> Result<AccountConnectionTestEventStream, AdminError> {
         let (stored, provider) = self.provider_for_account(target.account_id()).await?;
         let account = stored.account;
         let model = upstream_model.as_str().to_owned();
+        let input_text = prompt.unwrap_or_else(|| CONNECTION_TEST_INPUT.to_owned());
         let operation = provider
-            .connection_test_operation(&upstream_model, CONNECTION_TEST_INPUT)
+            .connection_test_operation(&upstream_model, &input_text)
             .await
             .map_err(|error| map_provider_error(error, "provider connection test"))?;
         let initial = vec![
@@ -1225,7 +1228,7 @@ impl AccountsService for DefaultAccountsService {
             },
             AccountConnectionTestEvent::Request {
                 model,
-                input_text: CONNECTION_TEST_INPUT.to_owned(),
+                input_text,
                 stream: true,
                 store: false,
             },
