@@ -60,6 +60,7 @@ ENV TZ=UTC
 # 运行时基础只从 Debian 官方源补 libpq（pg_dump 的动态依赖；ABI 兼容，无需引入第三方
 # APT 源）。pg_dump/pg_restore 二进制由 pg-client stage COPY，构建期不依赖运行时安装。
 # 更新基础镜像已有的系统包，使固定 digest 的镜像也能获取 Debian 安全更新。
+# Camoufox 初始化需要可写的用户主目录，不能将其指向 root 所有的应用目录
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl tzdata libpq5 libstdc++6 libatomic1 \
@@ -68,7 +69,7 @@ RUN apt-get update \
     && ln -snf "/usr/share/zoneinfo/${TZ}" /etc/localtime \
     && printf '%s\n' "${TZ}" > /etc/timezone \
     && groupadd --system --gid 10001 cpr \
-    && useradd --system --uid 10001 --gid cpr --home-dir /app --shell /usr/sbin/nologin cpr \
+    && useradd --system --uid 10001 --gid cpr --create-home --home-dir /home/cpr --shell /usr/sbin/nologin cpr \
     && install -d -o cpr -g cpr \
         /app/bin /app/deploy /app/.runtime/data /app/.runtime/logs /app/web \
     && rm -rf /var/lib/apt/lists/*

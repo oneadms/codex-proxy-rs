@@ -422,7 +422,7 @@ host:
     module_directory: 'C:\cpr\bin\protocol-login'
 ```
 
-相对配置路径以 `deploy/config.yaml` 所在目录为基准，未指定依赖目录时使用应用二进制旁的 `protocol-login`。Linux 二进制部署还需安装 Firefox 所需的 GTK、字体和音频等系统库，可在依赖目录执行 `npx playwright-core install-deps firefox`
+相对配置路径以 `deploy/config.yaml` 所在目录为基准，未指定依赖目录时使用应用二进制旁的 `protocol-login`。Linux 二进制部署还需安装 Firefox 所需的 GTK、字体和音频等系统库，可在依赖目录执行 `npx playwright-core install-deps firefox`。运行用户的主目录需可写，以完成浏览器初始化和字体缓存
 
 每个条目使用独立的无头浏览器和账号节点时区，接口请求及实时 Sentinel SDK 通过浏览器网络栈使用同一代理。浏览器启动或代理失败时条目失败，不直连或换节点重试。设备参数随账号凭据保存，Cookie 和网页存储随浏览器关闭清理；导入选项见[协议登录 API](../docs/api.md#账号能力导入与-oauth)
 
