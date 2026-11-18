@@ -5,6 +5,8 @@
       "description": "Sign in with passwords and 2FA to authorize Codex in batches",
       "pool": "Node pool",
       "poolRequired": "Select a node pool",
+      "changeDevice": "Change device",
+      "deviceHelp": "Reuse each account’s saved device by default, or generate new devices for this batch and save them after a successful import",
       "allocation": "Prefer available nodes with fewer accounts, then lower latency, and follow their location and time zone",
       "accounts": "Accounts, one username----password----2fa per line",
       "revokeNotice": "Other sessions will be signed out after login, keeping only this session and the same node throughout authorization",

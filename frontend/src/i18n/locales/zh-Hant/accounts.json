@@ -5,6 +5,8 @@
       "description": "使用密碼與 2FA 批次登入並完成 Codex 授權",
       "pool": "節點池",
       "poolRequired": "請選擇節點池",
+      "changeDevice": "更換裝置",
+      "deviceHelp": "預設沿用各帳號已儲存的裝置，開啟後為本批帳號產生新裝置，成功匯入後儲存",
       "allocation": "優先分配帳號較少、延遲較低的可用節點，並跟隨節點位置和時區",
       "accounts": "帳號，每行 username----password----2fa",
       "revokeNotice": "登入後會登出其他工作階段，僅保留本次工作階段，登入與授權全程使用同一節點",

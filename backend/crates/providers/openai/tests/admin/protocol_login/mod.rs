@@ -1,5 +1,7 @@
 //! 使用隔离 TLS 代理验证登录、会话清理、授权回调及拒绝路径
 
+mod browser;
+
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
@@ -10,7 +12,12 @@ use gateway_admin::{
     model::provider_credentials::{PrepareCredentialImport, ProviderDocument},
     ports::provider::ProviderAdminErrorKind,
 };
-use gateway_core::account::{OpaqueProviderData, OutboundProxy, RequestLocation};
+use gateway_core::account::{
+    OpaqueProviderData, OutboundProxy, ProviderAccountStore, RequestLocation,
+};
+use provider_openai::credential::{
+    CodexCredentialAdmin, CodexCredentialCodec, ImportCodexOAuthCredential,
+};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use serde_json::{Value, json};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWriteExt as _};
@@ -48,6 +55,9 @@ fn fixed_proxy_login_should_revoke_only_other_sessions_before_authorizing() {
         "missing-proxy",
         "unidentified-current",
         "proxy-failed",
+        "reuse-device",
+        "change-device",
+        "failed-change-device",
     ] {
         let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "admin::protocol_login::fixed_proxy_login_should_revoke_only_other_sessions_before_authorizing", "--nocapture"])
@@ -85,7 +95,12 @@ async fn run_case(case: &str) {
     let acceptor = TlsAcceptor::from(Arc::new(server));
     let state = Arc::new(Mutex::new(State::default()));
     let observed = state.clone();
-    let scenario = case.to_owned();
+    let scenario = if case == "failed-change-device" {
+        "revoke-failed"
+    } else {
+        case
+    }
+    .to_owned();
     let worker = tokio::spawn(async move {
         loop {
             let (mut stream, _) = listener.accept().await.unwrap();
@@ -129,17 +144,47 @@ async fn run_case(case: &str) {
         }
     });
     let config = super::valid_config();
+    let store = Arc::new(crate::support::MemoryAccountStore::default());
+    let original_device = json!({"id":"00000000-0000-4000-8000-000000000003", "config":{"navigator.platform":"Linux x86_64", "canvas:seed":98765}});
+    let existing = if matches!(
+        case,
+        "reuse-device" | "change-device" | "failed-change-device"
+    ) {
+        let mut profile = crate::support::profile("workspace_fixture");
+        profile.email = Some("fixture@example.invalid".to_owned());
+        profile.chatgpt_user_id = "user_fixture".to_owned();
+        let mut account = CodexCredentialAdmin
+            .prepare_import(ImportCodexOAuthCredential {
+                account_id: "acct_saved_device".to_owned(),
+                name: "saved device".to_owned(),
+                secret: crate::support::secret("synthetic-original"),
+                verified_account: profile,
+                next_refresh_at: None,
+                enabled: true,
+            })
+            .unwrap();
+        let mut data = CodexCredentialCodec::decode_complete(&account.credential).unwrap();
+        data.oauth_mut().unwrap().protocol_login_device = Some(Box::new(original_device.clone()));
+        account.credential = CodexCredentialCodec::encode_complete(data).unwrap();
+        let credential = account.credential.clone();
+        store.create_account(account).await.unwrap();
+        Some(credential)
+    } else {
+        None
+    };
+    let browser = Arc::new(browser::FixtureBrowser::default());
     let bundle = provider_openai::initialize(
         config.config.clone(),
-        super::provider_ports(),
+        super::provider_ports_with(store.clone(), Arc::new(super::TestOAuthPending::default())),
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
-        crate::support::javascript_runtime(),
+        browser.clone(),
     )
     .await
     .unwrap();
     let document = json!({
         "authentication_kind": "protocol_login", "username": "fixture@example.invalid",
         "password": "synthetic-password", "totpSecret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+        "changeDevice": matches!(case, "change-device" | "failed-change-device"),
     });
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(20),
@@ -156,6 +201,18 @@ async fn run_case(case: &str) {
     .await
     .unwrap();
     worker.abort();
+    if let Some(existing) = &existing {
+        let current = store
+            .load_current_credential(
+                &gateway_core::account::ProviderAccountId::new("acct_saved_device").unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            current.credential.expose_to_provider(),
+            existing.expose_to_provider()
+        );
+    }
     let state = state.lock().unwrap();
     if matches!(
         case,
@@ -165,6 +222,8 @@ async fn run_case(case: &str) {
             | "account-entities"
             | "account-stream"
             | "json-continuation"
+            | "reuse-device"
+            | "change-device"
     ) {
         let prepared = result.unwrap();
         assert_eq!(prepared.credentials.len(), 1);
@@ -185,6 +244,26 @@ async fn run_case(case: &str) {
             .unwrap();
         assert!(revoke_at < authorize_at);
         assert_eq!(state.paths.last().unwrap(), "/oauth/token");
+        let material = prepared.credentials[0]
+            .provider_material
+            .expose_to_provider();
+        let value = material.expose_to_provider();
+        assert_eq!(
+            value["protocol_login_device"],
+            browser.devices.lock().unwrap()[0]
+        );
+        if case == "reuse-device" {
+            assert_eq!(value["protocol_login_device"], original_device);
+        }
+        if case == "change-device" {
+            assert_ne!(value["protocol_login_device"]["id"], original_device["id"]);
+        }
+        if let Some(existing) = &existing {
+            assert_eq!(
+                value["installation_id"],
+                existing.expose_to_provider()["installation_id"]
+            );
+        }
     } else {
         assert!(result.is_err());
         assert!(!state.paths.iter().any(|path| path == "/oauth/token"));
@@ -249,6 +328,10 @@ async fn run_case(case: &str) {
         }
     }
     assert!(!state.revoked.iter().any(|id| id == "us_current"));
+    assert_eq!(
+        *browser.closed.lock().unwrap(),
+        usize::from(case != "missing-proxy")
+    );
 }
 
 async fn read_request(stream: &mut (impl AsyncRead + Unpin)) -> (String, String) {

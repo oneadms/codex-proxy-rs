@@ -142,12 +142,27 @@ impl OpenAiAdminProvider {
         &self,
         mut incoming: NewProviderAccount,
     ) -> Result<NewProviderAccount, ProviderAdminError> {
-        let Some(existing) = self
+        let existing = self
             .accounts
             .get_account(incoming.account.id())
             .await
-            .map_err(map_store_error)?
-        else {
+            .map_err(map_store_error)?;
+        // 重复导入按上游用户和工作区合并，与 Store 的唯一账号身份保持一致
+        let existing = if existing.is_some() || incoming.account.upstream_user_id().is_none() {
+            existing
+        } else {
+            self.accounts
+                .list_for_provider(incoming.account.provider())
+                .await
+                .map_err(map_store_error)?
+                .into_iter()
+                .find(|account| {
+                    account.upstream_user_id() == incoming.account.upstream_user_id()
+                        && account.upstream_account_id().unwrap_or_default()
+                            == incoming.account.upstream_account_id().unwrap_or_default()
+                })
+        };
+        let Some(existing) = existing else {
             return Ok(incoming);
         };
         if existing.provider() != incoming.account.provider()
@@ -501,18 +516,22 @@ impl ProviderAdmin for OpenAiAdminProvider {
         command: PrepareCredentialImport,
     ) -> Result<PreparedCredentialImport, ProviderAdminError> {
         let document = Value::Object(command.document.into_provider_data().into_inner());
-        let document = if document.get("authentication_kind").and_then(Value::as_str)
+        let (document, login_device) = if document
+            .get("authentication_kind")
+            .and_then(Value::as_str)
             == Some("protocol_login")
         {
-            crate::credential::prepare_protocol_login(
+            let login = crate::credential::prepare_protocol_login(
                 document,
                 command.default_outbound_proxy.as_ref(),
                 command.default_request_location.as_ref(),
                 Arc::clone(&self.javascript),
+                self.accounts.as_ref(),
             )
-            .await?
+            .await?;
+            (login.tokens, Some(login.device))
         } else {
-            document
+            (document, None)
         };
         let prepared = self
             .credentials
@@ -524,7 +543,16 @@ impl ProviderAdmin for OpenAiAdminProvider {
             .map_err(map_credential_admin_error)?;
         let observed_at = Utc::now();
         let mut credentials = Vec::with_capacity(prepared.accounts().len());
-        for account in prepared.into_accounts() {
+        for mut account in prepared.into_accounts() {
+            if let Some(device) = &login_device {
+                let mut data = CodexCredentialCodec::decode_complete(&account.credential)
+                    .map_err(|_| provider_admin_error(ProviderAdminErrorKind::Invalid))?;
+                data.oauth_mut()
+                    .ok_or_else(|| provider_admin_error(ProviderAdminErrorKind::Invalid))?
+                    .protocol_login_device = Some(Box::new(device.clone()));
+                account.credential = CodexCredentialCodec::encode_complete(data)
+                    .map_err(|_| provider_admin_error(ProviderAdminErrorKind::Invalid))?;
+            }
             let account = self
                 .preserve_existing_installation_id(account)
                 .await

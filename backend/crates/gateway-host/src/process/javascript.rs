@@ -22,12 +22,14 @@ const BOOTSTRAP: &str = r#"const lines=require('readline').createInterface({inpu
 #[serde(default)]
 pub struct JavaScriptConfig {
     pub executable: PathBuf,
+    pub module_directory: Option<PathBuf>,
 }
 
 impl Default for JavaScriptConfig {
     fn default() -> Self {
         Self {
             executable: PathBuf::from("node"),
+            module_directory: None,
         }
     }
 }
@@ -42,6 +44,16 @@ impl JavaScriptConfig {
         if self.executable.is_relative() && self.executable.components().count() > 1 {
             self.executable = source_dir.join(&self.executable);
         }
+        if let Some(directory) = &mut self.module_directory {
+            if directory.as_os_str().is_empty() {
+                return Err(crate::ConfigError::InvalidField(
+                    "host.javascript.module_directory",
+                ));
+            }
+            if directory.is_relative() {
+                *directory = source_dir.join(&*directory);
+            }
+        }
         Ok(())
     }
 }
@@ -49,6 +61,7 @@ impl JavaScriptConfig {
 pub struct NodeJavaScriptRuntime {
     executable: PathBuf,
     directory: PathBuf,
+    module_directory: PathBuf,
     processes: Arc<ProcessSupervisor>,
 }
 
@@ -79,9 +92,16 @@ impl NodeJavaScriptRuntime {
         } else {
             config.executable
         };
+        let module_directory = config.module_directory.unwrap_or_else(|| {
+            std::env::current_exe()
+                .ok()
+                .and_then(|path| path.parent().map(|parent| parent.join("protocol-login")))
+                .unwrap_or_else(|| directory.join("protocol-login"))
+        });
         Self {
             executable,
             directory,
+            module_directory,
             processes,
         }
     }
@@ -101,6 +121,20 @@ impl JavaScriptRuntime for NodeJavaScriptRuntime {
             return Err(JavaScriptError::MessageLimit);
         }
         let mut environment = vec![(OsString::from("TZ"), OsString::from(timezone))];
+        environment.extend([
+            (
+                OsString::from("NODE_PATH"),
+                self.module_directory.join("node_modules").into_os_string(),
+            ),
+            (
+                OsString::from("CAMOUFOX_INSTALL_DIR"),
+                self.module_directory.join("camoufox").into_os_string(),
+            ),
+            (
+                OsString::from("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD"),
+                OsString::from("1"),
+            ),
+        ]);
         // Windows 加密随机数初始化依赖 SystemRoot，不能随普通部署环境一起清空
         if cfg!(windows)
             && let Some(system_root) = std::env::var_os("SystemRoot")
@@ -122,7 +156,7 @@ impl JavaScriptRuntime for NodeJavaScriptRuntime {
                 ProcessStartError::Pipes => JavaScriptError::Communication,
             })?;
         let mut session = Box::new(NodeSession {
-            input: process.input,
+            input: Some(process.input),
             output: BufReader::new(process.output),
             control: process.control,
         });
@@ -132,7 +166,7 @@ impl JavaScriptRuntime for NodeJavaScriptRuntime {
 }
 
 struct NodeSession {
-    input: tokio::process::ChildStdin,
+    input: Option<tokio::process::ChildStdin>,
     output: BufReader<tokio::process::ChildStdout>,
     control: ProcessControl,
 }
@@ -147,15 +181,16 @@ impl JavaScriptSession for NodeSession {
         {
             return Err(JavaScriptError::MessageLimit);
         }
-        self.input
+        let input = self.input.as_mut().ok_or(JavaScriptError::Closed)?;
+        input
             .write_all(message.as_bytes())
             .await
             .map_err(|_| JavaScriptError::Communication)?;
-        self.input
+        input
             .write_all(b"\n")
             .await
             .map_err(|_| JavaScriptError::Communication)?;
-        self.input
+        input
             .flush()
             .await
             .map_err(|_| JavaScriptError::Communication)
@@ -179,14 +214,28 @@ impl JavaScriptSession for NodeSession {
             .map_err(|_| JavaScriptError::Communication)
     }
 
-    async fn close(self: Box<Self>) {
-        self.control.stop();
-        self.control.exited().await;
+    async fn close(mut self: Box<Self>) {
+        close_session(self.input.take(), self.control.clone()).await;
     }
 }
 
 impl Drop for NodeSession {
     fn drop(&mut self) {
-        self.control.stop();
+        if let Some(input) = self.input.take() {
+            // 先关闭输入，让脚本回收浏览器及临时配置，再释放受管进程槽位
+            let control = self.control.clone();
+            tokio::spawn(close_session(Some(input), control));
+        }
+    }
+}
+
+async fn close_session(input: Option<tokio::process::ChildStdin>, control: ProcessControl) {
+    drop(input);
+    if tokio::time::timeout(std::time::Duration::from_secs(10), control.exited())
+        .await
+        .is_err()
+    {
+        control.stop();
+        control.exited().await;
     }
 }

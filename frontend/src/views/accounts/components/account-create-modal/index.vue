@@ -194,6 +194,7 @@ async function requestCreate() {
           v-else-if="mode === 'protocol'"
           v-model="form.importTexts.protocol"
           v-model:node-pool-id="form.nodePoolId"
+          v-model:change-device="form.changeDevice"
           :disabled="busy"
         />
         <AccountImportFields

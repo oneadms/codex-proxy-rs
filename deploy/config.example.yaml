@@ -17,9 +17,11 @@ host:
   # OpenAI 会话身份、系统更新状态和备份暂存区的统一根目录。
   # 相对路径以 deploy/config.yaml 所在目录为基准。
   runtime_data_dir: '../.runtime/data'
-  # 协议登录的动态安全验证使用 Node.js
+  # 协议登录通过 Node.js 启动 Camoufox
   javascript:
     executable: 'node'
+    # 默认使用应用二进制旁的 protocol-login 目录
+    module_directory: null
   logging:
     level: 'info'
     stdout: true

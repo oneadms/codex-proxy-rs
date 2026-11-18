@@ -50,6 +50,7 @@ async fn javascript_output_is_bounded_and_missing_executable_does_not_keep_a_slo
     let missing = NodeJavaScriptRuntime::new(
         gateway_host::process::JavaScriptConfig {
             executable: directory.path().join("private-missing-runtime"),
+            ..Default::default()
         },
         directory.path().to_owned(),
         processes.clone(),

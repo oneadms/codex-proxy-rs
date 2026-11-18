@@ -1,61 +1,124 @@
-//! 协议登录独占 Cookie 和代理连接，限制重定向并校验会话清理结果
+//! 浏览器协议登录通信、受限导航和会话清理结果校验
 
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeMap, HashSet},
+    io::Read as _,
+    sync::Arc,
+};
 
 use chrono_tz::Tz;
-use gateway_admin::ports::provider::{ProviderAdminError, ProviderAdminErrorKind};
+use gateway_admin::ports::{
+    javascript::{JavaScriptError, JavaScriptSession},
+    provider::{ProviderAdminError, ProviderAdminErrorKind},
+};
 use gateway_core::account::OutboundProxy;
-use reqwest::{Client, Method, RequestBuilder, cookie::Jar, redirect::Policy};
+use reqwest::{Client, Method, RequestBuilder};
+use secrecy::{ExposeSecret as _, SecretString};
 use serde_json::{Value, json};
+use tokio::sync::Mutex;
 use url::Url;
 use uuid::Uuid;
 
 use super::{failure, invalid, text};
 
-pub(super) const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
 const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 
 pub(super) struct ProtocolClient {
-    pub(super) javascript: Arc<dyn gateway_admin::ports::javascript::JavaScriptRuntime>,
     client: Client,
+    session: Mutex<Box<dyn JavaScriptSession>>,
     pub(super) device_id: String,
-    pub(super) timezone: Tz,
+    pub(super) device: Value,
 }
 
 impl ProtocolClient {
-    pub(super) fn new(
+    pub(super) async fn new(
         proxy: &OutboundProxy,
         timezone: Tz,
         javascript: Arc<dyn gateway_admin::ports::javascript::JavaScriptRuntime>,
+        saved_device: Option<Value>,
     ) -> Result<Self, ProviderAdminError> {
-        let jar = Arc::new(Jar::default());
-        let device_id = Uuid::new_v4().to_string();
-        for origin in ["https://chatgpt.com/", "https://auth.openai.com/"] {
-            let url = Url::parse(origin).map_err(|_| invalid("登录地址不合法"))?;
-            jar.add_cookie_str(&format!("oai-did={device_id}; Path=/; Secure"), &url);
-        }
-        let builder = gateway_egress::http_client(Some(proxy))
-            .map_err(|_| invalid("协议登录代理配置不合法"))?
-            .cookie_provider(jar)
-            .redirect(Policy::none())
-            .user_agent(USER_AGENT)
-            .connect_timeout(Duration::from_secs(30))
-            .timeout(Duration::from_secs(60));
-        let client = crate::transport::tls::build_reqwest_client_with_custom_ca(builder).map_err(
-            |error| {
-                failure(
-                    "协议登录无法初始化代理连接",
-                    ProviderAdminErrorKind::Unavailable,
-                )
-                .with_source(error)
-            },
-        )?;
-        Ok(Self {
-            javascript,
+        let mut program = String::new();
+        flate2::read::GzDecoder::new(
+            &include_bytes!("../../../runtime/protocol-login/browser-runtime.generated.gz")[..],
+        )
+        .read_to_string(&mut program)
+        .map_err(|_| invalid("协议登录浏览器资源不合法"))?;
+        let session = javascript
+            .start(&program, timezone.name())
+            .await
+            .map_err(map_runtime_error)?;
+        // reqwest 只编码表单及 JSON，不执行网络请求，实际请求统一交给浏览器
+        let client = Client::builder()
+            .no_proxy()
+            .build()
+            .map_err(|_| invalid("协议登录请求初始化失败"))?;
+        let mut this = Self {
             client,
-            device_id,
-            timezone,
-        })
+            session: Mutex::new(session),
+            device_id: String::new(),
+            device: Value::Null,
+        };
+        let ready = this.call(json!({
+            "type": "init", "proxy": proxy.expose_url(), "timezone": timezone.name(), "device": saved_device,
+        })).await?;
+        let device = ready
+            .get("device")
+            .filter(|value| value.is_object())
+            .ok_or_else(|| invalid("协议登录浏览器未返回设备参数"))?;
+        let id = super::text(device, "id")?;
+        Uuid::parse_str(id).map_err(|_| invalid("协议登录设备标识不合法"))?;
+        this.device_id = id.to_owned();
+        this.device = device.clone();
+        Ok(this)
+    }
+
+    pub(super) async fn close(self) {
+        self.session.into_inner().close().await;
+    }
+
+    pub(super) async fn call(&self, command: Value) -> Result<Value, ProviderAdminError> {
+        let mut session = self.session.lock().await;
+        let command =
+            serde_json::to_string(&command).map_err(|_| invalid("协议登录浏览器请求不合法"))?;
+        session
+            .send(&SecretString::from(command))
+            .await
+            .map_err(map_runtime_error)?;
+        let response = session.receive().await.map_err(map_runtime_error)?;
+        let response: Value = serde_json::from_str(response.expose_secret())
+            .map_err(|_| invalid("协议登录浏览器响应不合法"))?;
+        if response.get("type").and_then(Value::as_str) == Some("error") {
+            let (message, kind) = match response.get("code").and_then(Value::as_str) {
+                Some("browser_unavailable") => (
+                    "协议登录浏览器启动失败，请检查 Camoufox 运行环境",
+                    ProviderAdminErrorKind::Unavailable,
+                ),
+                Some("invalid_device") => {
+                    ("账号登录设备参数不合法", ProviderAdminErrorKind::Invalid)
+                }
+                Some("invalid_proxy") => {
+                    ("协议登录代理配置不合法", ProviderAdminErrorKind::Invalid)
+                }
+                Some("untrusted_url") => (
+                    "登录流程返回了不允许访问的地址",
+                    ProviderAdminErrorKind::Invalid,
+                ),
+                Some("response_limit") => (
+                    "上游登录响应超过大小限制",
+                    ProviderAdminErrorKind::BadGateway,
+                ),
+                Some("sentinel_failed") => (
+                    "浏览器安全验证未完成，需要人工确认",
+                    ProviderAdminErrorKind::BadGateway,
+                ),
+                _ => (
+                    "协议登录浏览器请求失败，操作结果未知",
+                    ProviderAdminErrorKind::Ambiguous,
+                ),
+            };
+            return Err(failure(message, kind));
+        }
+        Ok(response)
     }
 
     pub(super) fn request(
@@ -79,13 +142,6 @@ impl ProtocolClient {
             .client
             .request(method, target.clone())
             .header("accept", "application/json, text/plain, */*")
-            .header("accept-language", "en-US,en;q=0.9")
-            .header(
-                "sec-ch-ua",
-                "\"Chromium\";v=\"146\", \"Google Chrome\";v=\"146\", \"Not.A/Brand\";v=\"99\"",
-            )
-            .header("sec-ch-ua-mobile", "?0")
-            .header("sec-ch-ua-platform", "\"macOS\"")
             .header("origin", target.origin().ascii_serialization())
             .header(
                 "referer",
@@ -104,51 +160,64 @@ impl ProtocolClient {
             .map_err(|error| invalid("协议登录请求构建失败").with_source(error.without_url()))?;
         // 诊断只保留方法、路径和状态，不记录查询参数、请求正文或上游响应
         let diagnostic = format!("{} {}", request.method(), request.url().path());
-        let mut response = self.client.execute(request).await.map_err(|error| {
-            let kind = if error.is_connect() {
-                ProviderAdminErrorKind::Unavailable
-            } else {
-                ProviderAdminErrorKind::Ambiguous
-            };
-            failure("协议登录代理请求失败，请核对账号状态", kind)
-                .with_message(diagnostic.clone())
-                .with_source(error.without_url())
-        })?;
-        let status = response.status();
-        let clock_delta_seconds = response
+        let headers: BTreeMap<_, _> = request
             .headers()
-            .get(reqwest::header::DATE)
-            .and_then(|value| value.to_str().ok())
+            .iter()
+            .map(|(name, value)| {
+                value
+                    .to_str()
+                    .map(|value| (name.as_str(), value))
+                    .map_err(|_| invalid("协议登录请求头不合法"))
+            })
+            .collect::<Result<_, _>>()?;
+        let body = request
+            .body()
+            .and_then(|body| body.as_bytes())
+            .unwrap_or_default();
+        let body = std::str::from_utf8(body).map_err(|_| invalid("协议登录请求正文不合法"))?;
+        let response = self.call(json!({
+            "type": "request", "url": request.url().as_str(), "method": request.method().as_str(),
+            "headers": headers, "body": body,
+        })).await.map_err(|error| error.with_message(diagnostic.clone()))?;
+        self.response(&response, &diagnostic)
+    }
+
+    fn response(
+        &self,
+        response: &Value,
+        diagnostic: &str,
+    ) -> Result<(reqwest::StatusCode, Option<String>, String), ProviderAdminError> {
+        let status = response
+            .get("status")
+            .and_then(Value::as_u64)
+            .and_then(|status| u16::try_from(status).ok())
+            .and_then(|status| reqwest::StatusCode::from_u16(status).ok())
+            .ok_or_else(|| invalid("协议登录浏览器未返回状态码"))?;
+        let headers = &response["headers"];
+        let clock_delta_seconds = headers
+            .get("date")
+            .and_then(Value::as_str)
             .and_then(|value| chrono::DateTime::parse_from_rfc2822(value).ok())
             .map(|server| server.timestamp() - chrono::Utc::now().timestamp());
-        let browser_challenge = response
-            .headers()
-            .get("cf-mitigated")
-            .is_some_and(|value| value == "challenge");
+        let browser_challenge =
+            headers.get("cf-mitigated").and_then(Value::as_str) == Some("challenge");
         tracing::debug!(target: "openai_protocol_login", request = %diagnostic, status = status.as_u16(), ?clock_delta_seconds, "协议登录上游响应");
-        let location = response
-            .headers()
-            .get(reqwest::header::LOCATION)
-            .and_then(|value| value.to_str().ok())
+        let location = headers
+            .get("location")
+            .and_then(Value::as_str)
             .map(str::to_owned);
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|error| {
-            failure(
-                "协议登录响应未完整接收，操作结果未知",
-                ProviderAdminErrorKind::Ambiguous,
-            )
-            .with_source(error.without_url())
-        })? {
-            if bytes.len() + chunk.len() > MAX_RESPONSE_BYTES {
-                return Err(failure(
-                    "上游登录响应超过大小限制",
-                    ProviderAdminErrorKind::BadGateway,
-                ));
-            }
-            bytes.extend_from_slice(&chunk);
+        let body = response
+            .get("body")
+            .and_then(Value::as_str)
+            .ok_or_else(|| invalid("协议登录浏览器未返回响应正文"))?;
+        if body.len() > MAX_RESPONSE_BYTES {
+            return Err(failure(
+                "上游登录响应超过大小限制",
+                ProviderAdminErrorKind::BadGateway,
+            ));
         }
         if status.is_client_error() || status.is_server_error() {
-            let error = serde_json::from_slice::<Value>(&bytes).ok();
+            let error = serde_json::from_str::<Value>(body).ok();
             let deactivated = error
                 .as_ref()
                 .and_then(|error| error.pointer("/error/code"))
@@ -171,9 +240,7 @@ impl ProtocolClient {
             )
             .with_message(diagnostic));
         }
-        let body = String::from_utf8(bytes)
-            .map_err(|_| failure("上游登录响应格式不合法", ProviderAdminErrorKind::BadGateway))?;
-        Ok((status, location, body))
+        Ok((status, location, body.to_owned()))
     }
 
     pub(super) async fn get_json(&self, url: &str) -> Result<Value, ProviderAdminError> {
@@ -252,11 +319,19 @@ impl ProtocolClient {
             if is_callback(&target) {
                 return Ok((target, String::new()));
             }
-            let request = self.request(Method::GET, target.as_str())?.header(
-                "accept",
-                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            );
-            let (status, location, body) = self.send(request).await?;
+            drop(self.request(Method::GET, target.as_str())?);
+            let diagnostic = format!("GET {}", target.path());
+            let response = self
+                .call(json!({"type": "navigate", "url": target.as_str()}))
+                .await
+                .map_err(|error| error.with_message(diagnostic.clone()))?;
+            target = Url::parse(super::text(&response, "url")?)
+                .map_err(|_| invalid("浏览器跳转地址不合法"))?;
+            if is_callback(&target) {
+                return Ok((target, String::new()));
+            }
+            drop(self.request(Method::GET, target.as_str())?);
+            let (status, location, body) = self.response(&response, &diagnostic)?;
             let location = if status.is_redirection() {
                 location.ok_or_else(|| invalid("上游跳转缺少地址"))?
             } else {
@@ -371,4 +446,22 @@ pub(super) fn is_callback(url: &Url) -> bool {
         && url.username().is_empty()
         && url.password().is_none()
         && url.fragment().is_none()
+}
+
+fn map_runtime_error(error: JavaScriptError) -> ProviderAdminError {
+    let message = match error {
+        JavaScriptError::Unavailable => "协议登录需要可执行的 Node.js 运行时",
+        JavaScriptError::Capacity => "协议登录浏览器运行时已达并发上限",
+        _ => "协议登录浏览器通信中断，操作结果未知",
+    };
+    failure(
+        message,
+        match error {
+            JavaScriptError::Unavailable | JavaScriptError::Capacity => {
+                ProviderAdminErrorKind::Unavailable
+            }
+            _ => ProviderAdminErrorKind::Ambiguous,
+        },
+    )
+    .with_source(error)
 }

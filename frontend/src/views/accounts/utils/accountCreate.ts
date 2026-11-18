@@ -24,6 +24,7 @@ export interface AccountCreateForm {
   proxyMode: string
   proxyId: string
   nodePoolId: string
+  changeDevice: boolean
 }
 
 export function emptyAccountCreateForm(): AccountCreateForm {
@@ -47,6 +48,7 @@ export function emptyAccountCreateForm(): AccountCreateForm {
     proxyMode: 'deployment',
     proxyId: '',
     nodePoolId: '',
+    changeDevice: false,
   }
 }
 

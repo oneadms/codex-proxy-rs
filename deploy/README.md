@@ -411,16 +411,22 @@ Mihomo 运行配置位于 `host.runtime_data_dir` 下的 `mihomo` 目录，默�
 
 ### 协议登录运行时
 
-协议登录的动态安全验证需要 Node.js 24 或更高版本，应用镜像已内置 Node。二进制部署需将 `node` 加入应用进程的 `PATH`，也可指定可执行文件：
+协议登录需要 Node.js 24 或更高版本及 Camoufox，应用镜像已包含运行依赖与固定版本浏览器。二进制部署需将 `node` 加入应用进程的 `PATH`，将源码的 `backend/crates/providers/openai/runtime/protocol-login` 目录放到应用二进制旁的 `protocol-login` 目录，并在该目录执行 `npm ci --omit=dev` 和 `npm run fetch`。浏览器仅在安装阶段下载
+
+可指定 Node 可执行文件及依赖目录：
 
 ```yaml
 host:
   javascript:
     executable: 'C:\Program Files\nodejs\node.exe'
+    module_directory: 'C:\cpr\bin\protocol-login'
 ```
 
-带路径的相对值以 `deploy/config.yaml` 所在目录为基准。运行时依赖已内嵌，无需在部署环境执行 npm 安装。
-每次验证使用独立的脚本进程和账号时区，网络请求由账号绑定的代理客户端发送；SDK 要求无法自动完成的安全验证时，当前导入条目失败，不直连或更换节点重试
+相对配置路径以 `deploy/config.yaml` 所在目录为基准，未指定依赖目录时使用应用二进制旁的 `protocol-login`。Linux 二进制部署还需安装 Firefox 所需的 GTK、字体和音频等系统库，可在依赖目录执行 `npx playwright-core install-deps firefox`
+
+每个条目使用独立的无头浏览器和账号节点时区，接口请求及实时 Sentinel SDK 通过浏览器网络栈使用同一代理。浏览器启动或代理失败时条目失败，不直连或换节点重试。设备参数随账号凭据保存，Cookie 和网页存储随浏览器关闭清理；导入选项见[协议登录 API](../docs/api.md#账号能力导入与-oauth)
+
+设备参数包含在数据库备份中，回退到不支持设备参数的服务版本时，需要按[备份与恢复](#备份与恢复)使用对应版本的数据库备份
 
 ### 启动后的运行设置
 

@@ -48,6 +48,7 @@ fn plaintext_provider_schema_round_trips_dynamic_cookie_data() {
             poid: Some("poid-private".to_owned()),
         }),
         installation_id: "00000000-0000-4000-8000-000000000001".to_owned(),
+        protocol_login_device: None,
         access_token: "at".to_owned(),
         refresh_token: Some("rt".to_owned()),
         id_token: None,

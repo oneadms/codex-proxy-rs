@@ -1,6 +1,7 @@
 # Build outputs and dependency caches.
 **/target/
 **/node_modules/
+backend/crates/providers/openai/runtime/protocol-login/camoufox/
 **/.pnpm-store/
 **/.pnpm-cache/
 frontend/dist/

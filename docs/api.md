@@ -1634,9 +1634,10 @@ JSON 正文中的 `prompt` 原样作为测试输入，省略时使用 `Reply wit
 当前 xAI 导入上限为 16 MiB。内部 schema 由目标 Provider 独占解释：
 
 - OpenAI 接受单账号 OAuth 或 API Key 文档、`accounts` 数组（最多 200 项）、CPR 账号 bundle 和含代理引用的 sub2api 导出
-- OpenAI 协议登录接受单账号 `{ "authentication_kind": "protocol_login", "username": "用户邮箱", "password": "密码", "totpSecret": "2FA 密钥" }`。
+- OpenAI 协议登录接受单账号 `{ "authentication_kind": "protocol_login", "username": "用户邮箱", "password": "密码", "totpSecret": "2FA 密钥", "changeDevice": false }`。
   `totpSecret` 使用 Base32 密钥或 `otpauth://` 地址，按 SHA1、6 位和 30 秒周期生成验证码；每个任务条目对应一个账号。
-  管理端的协议登录入口按每行 `username----password----2fa` 拆分输入，并要求选择节点池
+  管理端的协议登录入口按每行 `username----password----2fa` 拆分输入，并要求选择节点池。
+  `changeDevice` 默认为 `false`，按邮箱复用已保存的 Linux 浏览器设备，尚无设备时随机生成；设为 `true` 时生成新设备，只有本次授权及账号导入成功才替换保存的设备。管理端的“更换设备”选项应用于本批全部条目
 - OpenAI OAuth token 字段接受 `accessToken`、`refreshToken`、`idToken`，以及官方
   `auth.json` 中的 `access_token`、`refresh_token`、`id_token`，可以嵌套在 `tokens` 等账号 object 内；
   每项至少包含 AT 或 RT。仅含 `OPENAI_API_KEY` 的客户端代理配置不是 OAuth 账号导入材料；
@@ -1648,11 +1649,11 @@ JSON 正文中的 `prompt` 原样作为测试输入，省略时使用 `Reply wit
 - xAI API Key 不是受支持的账号 credential
 - OAuth 导入由目标 Provider 完成必要的 token exchange 或身份投影。API Key 导入校验凭据格式与地址，不调用 OAuth 或 ChatGPT 身份接口；可用性由模型目录和连接测试验证
 
-协议登录要求已绑定的代理及其位置和时区，从密码、2FA、登录跳转、会话管理到 Codex 授权与令牌交换使用同一个代理连接配置和独立 Cookie。
+协议登录要求已绑定的代理及其位置和时区，从密码、2FA、登录跳转、会话管理到 Codex 授权与令牌交换使用同一个 Camoufox 浏览器及代理配置。
 登录后读取账号会话列表，保留唯一标记为 `is_current_device` 的会话，逐一退出其他会话并复查列表，确认成功后才请求 Codex 授权。
 回调 URL 只用于校验地址与 `state`、提取授权码，不实际请求 loopback 地址；授权码通过原代理交换令牌，再按普通 OAuth 导入合同入库并保留节点绑定。
-原始密码和 2FA 密钥只供本次内存任务使用，不作为账号凭据持久化。
-Sentinel SDK 通过同一代理实时下载，在受管 Node 进程中执行；SDK 的 fetch 与 XHR 请求交回当前账号的 HTTP 客户端，沿用代理、Cookie、设备标识与时区。
+设备标识、屏幕、硬件及 Canvas 等设备参数随账号凭据保存，UA 跟随已安装的浏览器版本，时区采用节点配置。每次登录使用新的 Cookie 容器和网页存储，流程结束后关闭浏览器，原始密码、2FA 密钥和网页登录状态不作为账号凭据持久化。
+登录接口通过对应站点执行原生 `fetch`，Sentinel SDK 在同一浏览器中实时加载和执行；浏览器下载、插件更新及 GeoIP 外部查询不在账号登录阶段执行。
 需要邮箱验证码、手机验证或 SDK 无法完成的人工安全校验时终止当前条目；账号停用、代理失败、会话清理失败或回调校验失败时也不会继续授权或直连重试。
 运行环境要求见[协议登录运行时](../deploy/README.md#协议登录运行时)
 

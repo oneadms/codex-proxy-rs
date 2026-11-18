@@ -351,6 +351,8 @@ pub struct CodexOAuthCredentialData {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub principal: Option<CodexCredentialPrincipal>,
     pub installation_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol_login_device: Option<Box<serde_json::Value>>,
     pub access_token: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refresh_token: Option<String>,
@@ -371,6 +373,13 @@ impl fmt::Debug for CodexOAuthCredentialData {
             .field("schema_version", &self.schema_version)
             .field("principal", &self.principal)
             .field("installation_id", &"<pseudonymous>")
+            .field(
+                "protocol_login_device",
+                &self
+                    .protocol_login_device
+                    .as_ref()
+                    .map(|_| "<pseudonymous>"),
+            )
             .field("access_token", &"<redacted>")
             .field(
                 "refresh_token",

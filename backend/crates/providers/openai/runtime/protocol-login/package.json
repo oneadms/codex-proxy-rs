@@ -7,12 +7,18 @@
   },
   "scripts": {
     "build": "node build.mjs",
+    "fetch": "node install-browser.cjs",
     "test": "node --test runtime.test.cjs"
   },
   "dependencies": {
-    "jsdom": "26.1.0"
+    "camoufox-js": "0.13.0",
+    "playwright-core": "1.62.0"
   },
   "devDependencies": {
     "esbuild": "0.25.12"
+  },
+  "overrides": {
+    "glob": "14.0.6",
+    "minimatch": "11.0.9"
   }
 }

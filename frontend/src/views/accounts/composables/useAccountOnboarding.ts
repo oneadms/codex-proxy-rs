@@ -93,7 +93,7 @@ export function useAccountOnboarding(options: {
       }
       const documents = form.source?.kind === 'bundle'
         ? mixedImportDocuments(form.importTexts.json)
-        : accountImportDocuments(requireImportProvider(provider), mode, form.importTexts[mode])
+        : accountImportDocuments(requireImportProvider(provider), mode, form.importTexts[mode], form.changeDevice)
       for (const document of documents)
         requireImportProvider(document.provider)
       const batches = accountImportBatches(documents.map(entry => ({
@@ -205,6 +205,7 @@ export function useAccountOnboarding(options: {
         protocol: '',
       },
       nodePoolId: '',
+      changeDevice: false,
     }
   }, { flush: 'sync' })
 

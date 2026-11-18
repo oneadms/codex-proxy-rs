@@ -88,7 +88,7 @@ export function mixedImportDocuments(text: string): AccountImportDocument[] {
   return documents
 }
 
-export function accountImportDocuments(provider: string, mode: string, text: string): AccountImportDocument[] {
+export function accountImportDocuments(provider: string, mode: string, text: string, changeDevice = false): AccountImportDocument[] {
   if (provider === 'openai' && mode === 'protocol') {
     const lines = text.split(/\r?\n/).map((value, index) => ({ value, line: index + 1 })).filter(entry => entry.value.trim())
     if (!lines.length)
@@ -109,6 +109,7 @@ export function accountImportDocuments(provider: string, mode: string, text: str
           username,
           password: fields[1],
           totpSecret: fields[2].trim(),
+          changeDevice,
         },
       }
     })

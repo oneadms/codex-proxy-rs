@@ -5,6 +5,8 @@
       "description": "使用密码与 2FA 批量登录并完成 Codex 授权",
       "pool": "节点池",
       "poolRequired": "请选择节点池",
+      "changeDevice": "更换设备",
+      "deviceHelp": "默认复用各账号已保存的设备，开启后为本批账号生成新设备，成功导入后保存",
       "allocation": "优先分配账号较少、延迟较低的可用节点，并跟随节点位置和时区",
       "accounts": "账号，每行 username----password----2fa",
       "revokeNotice": "登录后会退出其他会话，仅保留本次会话，登录与授权全程使用同一节点",

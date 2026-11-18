@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { MihomoSubscription } from '@/api/modules/mihomo'
-import { ZFormItem, ZSelect, ZTextarea } from '@codex-proxy/ui'
+import { ZFormItem, ZSelect, ZSwitch, ZTextarea } from '@codex-proxy/ui'
 import { computed, onMounted, shallowRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getMihomoSubscriptions } from '@/api/modules/mihomo'
@@ -9,6 +9,7 @@ import { useRequestState } from '@/composables/useRequestState'
 defineProps<{ disabled: boolean }>()
 const text = defineModel<string>({ required: true })
 const nodePoolId = defineModel<string>('nodePoolId', { required: true })
+const changeDevice = defineModel<boolean>('changeDevice', { required: true })
 const { t } = useI18n({ useScope: 'global' })
 const subscriptions = shallowRef<MihomoSubscription[]>([])
 const request = useRequestState()
@@ -58,6 +59,12 @@ onMounted(async () => {
         autocomplete="off"
         spellcheck="false"
       />
+    </ZFormItem>
+    <ZFormItem :label="t('accounts.protocolLogin.changeDevice')">
+      <ZSwitch v-model="changeDevice" :disabled="disabled" :aria-label="t('accounts.protocolLogin.changeDevice')" />
+      <p class="mt-2 text-z-xs text-z-text-secondary">
+        {{ t('accounts.protocolLogin.deviceHelp') }}
+      </p>
     </ZFormItem>
     <p class="m-0 text-z-xs text-z-warning-text" role="note">
       {{ t('accounts.protocolLogin.revokeNotice') }}

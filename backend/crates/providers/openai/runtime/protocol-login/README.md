@@ -1,13 +1,16 @@
 # 协议登录脚本运行时
 
-OpenAI Provider 实时下载官方 Sentinel SDK，将其交给内嵌的页面运行环境执行。Host 管理 Node 进程，fetch 和 XHR 通过消息通道交回 Provider 的固定代理客户端，WebSocket 不能直连
+OpenAI Provider 通过受管 Node 进程启动 Camoufox，每个账号登录独占浏览器和指定节点代理。登录接口在对应 origin 使用原生 fetch，实时 Sentinel SDK 在同一浏览器执行，网络不回退到 Node HTTP 或部署默认出口
 
-`sentinel-runtime.generated.gz` 包含运行时及其依赖，随 Rust 二进制交付。运行及执行资源测试只需 Node.js 24 或更高版本；修改源码或依赖后，在此目录执行：
+`browser-runtime.generated.gz` 包含 Provider 脚本，随 Rust 二进制交付。Node.js 24 或更高版本、npm 依赖及固定版本 Camoufox 浏览器需安装到 Host 的 `module_directory`；安装和源码验证在此目录执行：
 
 ```sh
 npm ci
+npm run fetch
 npm run build
 npm test
 ```
 
-构建同时生成第三方版权说明并嵌入资源。页面适配参考 toSub2 1.7.1，原始 MIT 许可证见 `LICENSE.tosub2`；SDK 源码、Cookie 和安全令牌均在运行时通过内存传递，不写入资源文件
+Linux 还需 `npx playwright-core install-deps firefox` 所列系统库，容器构建负责安装。登录阶段禁止自动下载浏览器或扩展，不进行外部 GeoIP 查询
+
+设备配置保存实际生效的 Linux 硬件、屏幕和指纹种子，复用设备时 UA 跟随浏览器版本，时区取账号节点。网页登录状态仅存在于本次临时浏览器配置，关闭或取消时清理。`npm test` 使用真实浏览器与本机隔离 TLS 代理，覆盖设备复用、Cookie 隔离、SDK、回调及代理拒绝

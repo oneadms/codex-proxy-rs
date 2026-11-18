@@ -914,10 +914,10 @@ OpenAI / xAI 导入用例。并发槽位由单个 Worker 统一管理，条目�
 节点位置自动跟随复用代理管理用例，导入保护同时冻结出口与请求位置，避免协议登录到落库期间改变节点配置。
 订阅刷新发现节点配置变化时，已绑定账号或插件的旧节点会保留旧配置和本地监听，并转为不可分配的历史入口；
 新配置创建独立节点和代理，已保存对象的代理 ID、端口、出口和位置不会被刷新改写。历史入口在解除全部绑定后才停止监听并回收。
-OpenAI Provider 拥有密码与 TOTP 登录、会话清理、Codex 授权及回调校验，按账号独占 Cookie 和指定代理 client。
-Provider 下载实时 Sentinel SDK 并拥有验证协议，Host 通过 Admin 的 JavaScript 端口管理 Node 进程、有界通信和取消回收。
-SDK 的 fetch 与 XHR 交回同一 Provider HTTP 客户端；密码、TOTP 密钥和登录 Cookie 不传给脚本进程，未受管的 WebSocket 不能直连。
-会话列表无法唯一确定本次登录、其他会话未清理完成或上游要求人工验证时终止该条目，不把浏览器会话、密码或 TOTP 密钥写入账号凭据
+OpenAI Provider 拥有密码与 TOTP 登录、会话清理、Codex 授权及回调校验，Host 通过 Admin 的 JavaScript 端口管理 Node 进程、有界通信和取消回收。
+每次登录使用独立 Camoufox 浏览器，登录接口的原生 fetch 和实时 Sentinel SDK 共用账号绑定的代理与 Cookie；跳转由 Provider 和浏览器逐步校验，loopback 回调只提取授权码。
+Provider 按邮箱读取既有 Linux 设备参数，成功导入时与 OAuth 凭据一并保存，显式更换设备也只在成功后提交；普通令牌刷新保留设备。
+浏览器关闭会释放本次 Cookie 和网页存储，会话列表无法唯一确定本次登录、其他会话未清理完成或上游要求人工验证时终止该条目，不把浏览器会话、密码或 TOTP 密钥写入账号凭据
 
 ### 登录与查询身份
 

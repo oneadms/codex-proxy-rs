@@ -6,7 +6,7 @@ mod totp;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use gateway_admin::ports::provider::{ProviderAdminError, ProviderAdminErrorKind};
-use gateway_core::account::{OutboundProxy, RequestLocation};
+use gateway_core::account::{OutboundProxy, ProviderAccountStore, RequestLocation};
 use secrecy::{ExposeSecret as _, SecretString};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -27,6 +27,13 @@ struct LoginInput {
     username: String,
     password: SecretString,
     totp_secret: SecretString,
+    #[serde(default)]
+    change_device: bool,
+}
+
+pub(crate) struct PreparedProtocolLogin {
+    pub(crate) tokens: Value,
+    pub(crate) device: Value,
 }
 
 pub(crate) async fn prepare_protocol_login(
@@ -34,7 +41,8 @@ pub(crate) async fn prepare_protocol_login(
     proxy: Option<&OutboundProxy>,
     location: Option<&RequestLocation>,
     javascript: Arc<dyn gateway_admin::ports::javascript::JavaScriptRuntime>,
-) -> Result<Value, ProviderAdminError> {
+    accounts: &dyn ProviderAccountStore,
+) -> Result<PreparedProtocolLogin, ProviderAdminError> {
     let input: LoginInput = serde_json::from_value(document)
         .map_err(|_| invalid("协议登录需提供用户名、密码和 2FA 密钥"))?;
     if input.authentication_kind != "protocol_login"
@@ -51,15 +59,77 @@ pub(crate) async fn prepare_protocol_login(
     let proxy = proxy.ok_or_else(|| invalid("协议登录必须绑定节点代理"))?;
     let location = location.ok_or_else(|| invalid("协议登录节点尚未设置位置和时区"))?;
     totp::generate(input.totp_secret.expose_secret(), 0)?;
-    let client = ProtocolClient::new(proxy, location.timezone, javascript)?;
-    tokio::time::timeout(std::time::Duration::from_secs(300), login(&client, input))
+    let saved = if input.change_device {
+        None
+    } else {
+        saved_device(accounts, &input.username).await?
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(300), async {
+        let client = ProtocolClient::new(proxy, location.timezone, javascript, saved).await?;
+        let result = login(&client, input).await;
+        let device = client.device.clone();
+        client.close().await;
+        result.map(|tokens| PreparedProtocolLogin { tokens, device })
+    })
+    .await
+    .map_err(|_| {
+        failure(
+            "协议登录超时，授权结果未知，请先核对账号状态",
+            ProviderAdminErrorKind::Ambiguous,
+        )
+    })?
+}
+
+async fn saved_device(
+    accounts: &dyn ProviderAccountStore,
+    username: &str,
+) -> Result<Option<Value>, ProviderAdminError> {
+    let provider = gateway_core::identity::ProviderKind::new("openai")
+        .map_err(|_| invalid("协议登录平台不合法"))?;
+    let mut matches = accounts
+        .list_for_provider(&provider)
         .await
-        .map_err(|_| {
-            failure(
-                "协议登录超时，授权结果未知，请先核对账号状态",
-                ProviderAdminErrorKind::Ambiguous,
-            )
-        })?
+        .map_err(|error| {
+            failure("无法读取账号登录设备", ProviderAdminErrorKind::Unavailable).with_source(error)
+        })?;
+    matches.retain(|account| {
+        account.authentication_kind() == super::CODEX_AUTHENTICATION_KIND_OAUTH
+            && account
+                .email()
+                .is_some_and(|email| email.eq_ignore_ascii_case(username.trim()))
+    });
+    matches.sort_by(|left, right| left.id().as_str().cmp(right.id().as_str()));
+    let mut latest: Option<Value> = None;
+    for account in matches {
+        let loaded = accounts
+            .load_current_credential(account.id())
+            .await
+            .map_err(|error| {
+                failure("无法读取账号登录设备", ProviderAdminErrorKind::Unavailable)
+                    .with_source(error)
+            })?;
+        let data = super::CodexCredentialCodec::decode_complete(&loaded.credential)
+            .map_err(|_| invalid("账号登录设备数据不合法"))?;
+        if let Some(device) = data
+            .oauth()
+            .and_then(|data| data.protocol_login_device.as_deref().cloned())
+        {
+            // 同一邮箱的多个工作区共享最近一次成功导入的设备
+            if latest.as_ref().is_none_or(|saved| {
+                saved
+                    .get("createdAt")
+                    .and_then(Value::as_i64)
+                    .unwrap_or_default()
+                    < device
+                        .get("createdAt")
+                        .and_then(Value::as_i64)
+                        .unwrap_or_default()
+            }) {
+                latest = Some(device);
+            }
+        }
+    }
+    Ok(latest)
 }
 
 async fn login(client: &ProtocolClient, input: LoginInput) -> Result<Value, ProviderAdminError> {

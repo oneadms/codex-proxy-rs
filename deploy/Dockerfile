@@ -6,6 +6,16 @@ ARG POSTGRES_IMAGE=postgres:18-bookworm@sha256:bbf83594798e144bff365a9c191c5d779
 
 FROM node:26.13.1-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a53c0161664a011f7ff6b0f1 AS javascript-runtime
 
+FROM javascript-runtime AS browser-runtime
+
+WORKDIR /opt/protocol-login
+COPY backend/crates/providers/openai/runtime/protocol-login/package.json backend/crates/providers/openai/runtime/protocol-login/package-lock.json ./
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 make g++ \
+    && npm ci --omit=dev --no-fund --no-audit
+COPY backend/crates/providers/openai/runtime/protocol-login/install-browser.cjs ./
+RUN npm run fetch
+
 FROM node:26.13.1-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a53c0161664a011f7ff6b0f1 AS frontend-builder
 
 WORKDIR /app/frontend
@@ -53,6 +63,7 @@ ENV TZ=UTC
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl tzdata libpq5 libstdc++6 libatomic1 \
+        libgtk-3-0 libdbus-glib-1-2 libasound2 libx11-xcb1 libxt6 libgl1 libnss3 libxcomposite1 libxdamage1 libxrandr2 libgbm1 fonts-liberation \
     && install -d /usr/lib/postgresql/18/bin \
     && ln -snf "/usr/share/zoneinfo/${TZ}" /etc/localtime \
     && printf '%s\n' "${TZ}" > /etc/timezone \
@@ -66,6 +77,7 @@ COPY --from=pg-client /usr/lib/postgresql/18/bin/pg_dump /usr/lib/postgresql/18/
 COPY --from=pg-client /usr/lib/postgresql/18/bin/pg_restore /usr/lib/postgresql/18/bin/pg_restore
 COPY --from=javascript-runtime /usr/local/bin/node /usr/local/bin/node
 COPY --from=javascript-runtime /usr/local/LICENSE /usr/share/doc/node/LICENSE
+COPY --from=browser-runtime --chown=cpr:cpr /opt/protocol-login /app/bin/protocol-login
 RUN /usr/lib/postgresql/18/bin/pg_dump --version \
     && /usr/lib/postgresql/18/bin/pg_restore --version \
     && node --version

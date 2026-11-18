@@ -141,6 +141,7 @@ impl CodexCredentialCodec {
             transport: super::ResponsesTransport::oauth_default(),
             principal,
             installation_id,
+            protocol_login_device: None,
             access_token: secret.access_token.expose_secret().to_owned(),
             refresh_token: secret
                 .refresh_token
@@ -263,6 +264,9 @@ impl CodexCredentialCodec {
             (CodexCredentialData::OAuth(incoming), CodexCredentialData::OAuth(existing)) => {
                 incoming.installation_id = existing.installation_id;
                 incoming.transport = existing.transport;
+                if incoming.protocol_login_device.is_none() {
+                    incoming.protocol_login_device = existing.protocol_login_device;
+                }
             }
             (CodexCredentialData::ApiKey(incoming), CodexCredentialData::ApiKey(existing)) => {
                 incoming.installation_id = existing.installation_id;

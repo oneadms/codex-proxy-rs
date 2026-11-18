@@ -1,4 +1,4 @@
-// 通过运行时网络桥读取虚构服务响应，覆盖令牌与观察器两条路径
+// 通过浏览器原生请求读取虚构服务响应，覆盖令牌与观察器两条路径
 (() => {
   let requirements;
   const deviceId = () => /(?:^|;\s*)oai-did=([^;]+)/.exec(document.cookie)?.[1];
