@@ -45,6 +45,13 @@ fn fixed_proxy_login_should_revoke_only_other_sessions_before_authorizing() {
         "account-stream",
         "multiple-account-sessions",
         "json-continuation",
+        "email-password",
+        "email-password-without-methods",
+        "email-otp-required",
+        "email-reauth",
+        "email-password-unavailable",
+        "email-wrong-account",
+        "email-password-redirect",
         "revoke-failed",
         "wrong-state",
         "browser-challenge",
@@ -222,6 +229,8 @@ async fn run_case(case: &str) {
             | "account-entities"
             | "account-stream"
             | "json-continuation"
+            | "email-password"
+            | "email-password-without-methods"
             | "reuse-device"
             | "change-device"
     ) {
@@ -267,6 +276,37 @@ async fn run_case(case: &str) {
     } else {
         assert!(result.is_err());
         assert!(!state.paths.iter().any(|path| path == "/oauth/token"));
+        if case.starts_with("email-") {
+            let error = result.as_ref().unwrap_err();
+            assert!(!state.paths.iter().any(|path| {
+                matches!(
+                    path.as_str(),
+                    "/api/accounts/password/verify"
+                        | "/backend-api/accounts/sessions/revoke"
+                        | "/oauth/authorize"
+                )
+            }));
+            if case == "email-wrong-account" {
+                assert_eq!(
+                    error.public_message(),
+                    Some("上游登录会话与导入用户名不一致")
+                );
+            } else {
+                assert_eq!(error.message(), Some("GET /email-verification"));
+                assert_eq!(
+                    error.public_message(),
+                    Some("上游要求邮箱验证码，无法仅用密码和 2FA 完成协议登录")
+                );
+            }
+            assert_eq!(
+                state
+                    .paths
+                    .iter()
+                    .filter(|path| path.as_str() == "/log-in/password")
+                    .count(),
+                usize::from(case == "email-password-redirect")
+            );
+        }
         if matches!(
             case,
             "revoke-failed"
@@ -390,6 +430,9 @@ fn respond(case: &str, observed: &Mutex<State>, url: &Url, head: &str, body: &st
             body.len()
         );
     }
+    if case == "email-password-redirect" && url.path() == "/log-in/password" {
+        return "HTTP/1.1 302 Found\r\nLocation: /email-verification\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned();
+    }
     let token = || {
         let claims = json!({"exp": chrono::Utc::now().timestamp() + 3600, "email": "fixture@example.invalid", "https://api.openai.com/auth": {
             "chatgpt_account_id": "workspace_fixture", "chatgpt_user_id": "user_fixture", "chatgpt_plan_type": "plus",
@@ -400,14 +443,31 @@ fn respond(case: &str, observed: &Mutex<State>, url: &Url, head: &str, body: &st
         )
     };
     let response = match url.path() {
-        "/" | "/log-in" | "/log-in/password" | "/web-callback" => Value::Null,
+        "/" | "/log-in" | "/log-in/password" | "/email-verification" | "/web-callback" => {
+            Value::Null
+        }
         "/api/auth/providers" => json!({}),
         "/api/auth/csrf" => json!({"csrfToken": "synthetic-csrf"}),
         "/api/auth/signin/openai" => json!({"url": match case {
             "unexpected-login-page" => "https://auth.openai.com/log-in",
             "json-continuation" => "https://auth.openai.com/start-login",
+            case if case.starts_with("email-") => "https://auth.openai.com/email-verification",
             _ => "https://auth.openai.com/log-in/password",
         }}),
+        "/api/accounts/client_auth_session_dump" => {
+            let mut session = json!({
+                "email": if case == "email-wrong-account" { "other@example.invalid" } else { "fixture@example.invalid" },
+                "email_verification_mode": if case == "email-otp-required" { "post_signup" } else { "passwordless_login" },
+                "reauth": case == "email-reauth",
+            });
+            if case != "email-password-without-methods" {
+                session["login_methods"] = json!([{"type": if case == "email-password-unavailable" { "email_otp" } else { "password" }}]);
+            } else {
+                session.as_object_mut().unwrap().remove("email");
+                session["username"] = json!({"kind": "email", "value": "fixture@example.invalid"});
+            }
+            json!({"client_auth_session": session})
+        }
         "/start-login" => {
             json!({"method": "GET", "continue_url": "https://auth.openai.com/log-in/password"})
         }

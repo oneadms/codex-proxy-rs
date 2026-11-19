@@ -157,10 +157,45 @@ async fn login(client: &ProtocolClient, input: LoginInput) -> Result<Value, Prov
             ],
         )
         .await?;
-    let (landing, _) = client.follow(text(&signin, "url")?).await?;
+    let (mut landing, _) = client.follow(text(&signin, "url")?).await?;
+    if landing.path() == "/email-verification" {
+        let session = client
+            .get_json("https://auth.openai.com/api/accounts/client_auth_session_dump")
+            .await?;
+        let session = &session["client_auth_session"];
+        // 邮箱页也可能只是默认的免密入口；额外身份验证不能通过切换登录方式跳过
+        let password_allowed = session["email_verification_mode"].as_str()
+            == Some("passwordless_login")
+            && session["reauth"].as_bool() != Some(true)
+            && session.get("login_methods").is_none_or(|methods| {
+                methods.as_array().is_some_and(|methods| {
+                    methods
+                        .iter()
+                        .any(|method| method["type"].as_str() == Some("password"))
+                })
+            });
+        if password_allowed {
+            let username = session
+                .get("email")
+                .or_else(|| session.pointer("/username/value"))
+                .and_then(Value::as_str);
+            if !username
+                .is_some_and(|username| username.eq_ignore_ascii_case(input.username.trim()))
+            {
+                return Err(invalid("上游登录会话与导入用户名不一致"));
+            }
+            (landing, _) = client
+                .follow("https://auth.openai.com/log-in/password")
+                .await?;
+        }
+    }
     if landing.path() != "/log-in/password" {
         return Err(failure(
-            "上游未返回密码登录页，协议登录未继续执行",
+            if landing.path() == "/email-verification" {
+                "上游要求邮箱验证码，无法仅用密码和 2FA 完成协议登录"
+            } else {
+                "上游未返回密码登录页，协议登录未继续执行"
+            },
             ProviderAdminErrorKind::BadGateway,
         )
         .with_message(format!("GET {}", landing.path())));
