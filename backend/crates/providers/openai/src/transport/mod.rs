@@ -11,6 +11,7 @@ mod client_messages;
 mod client_stream;
 pub(crate) mod connection;
 mod correlation;
+mod device_identity;
 pub mod diagnostics;
 pub mod endpoints;
 pub mod headers;

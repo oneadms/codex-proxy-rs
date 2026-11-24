@@ -52,6 +52,7 @@ mod canonical;
 mod catalog;
 mod client;
 mod connection;
+mod device_identity;
 mod diagnostics;
 mod endpoints;
 mod headers;

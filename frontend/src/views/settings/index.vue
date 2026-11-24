@@ -15,6 +15,7 @@ import ClientProfileCard from './components/ClientProfileCard.vue'
 import ConcurrencyPolicyCard from './components/ConcurrencyPolicyCard.vue'
 import AccountErrorProtectionCard from './components/error-protection/AccountErrorProtectionCard.vue'
 import ModelAliasesCard from './components/ModelAliasesCard.vue'
+import OpenaiTelemetryCard from './components/OpenaiTelemetryCard.vue'
 import PrivacyPolicyCard from './components/privacy/PrivacyPolicyCard.vue'
 import RequestHistoryCard from './components/RequestHistoryCard.vue'
 import RequestLocationCard from './components/RequestLocationCard.vue'
@@ -251,6 +252,7 @@ watch(section, (value) => {
             @detect-location="detectLocation"
           />
           <PrivacyPolicyCard v-model="form.codexPrivacyPolicy" :disabled="disabled" />
+          <OpenaiTelemetryCard v-model:enabled="form.openaiTelemetryEnabled" />
           <ModelAliasesCard
             :mappings="mappings"
             :loading="loading"

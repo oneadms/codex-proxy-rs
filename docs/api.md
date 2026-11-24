@@ -508,6 +508,14 @@ Responses API Key 与 OAuth 共用模拟客户端画像（`User-Agent`、`origin
 Responses 的安装身份通过正文 `client_metadata` 及 turn metadata 发送，不默认添加独立的
 `x-codex-installation-id` 请求头，也不透传下游同名头。Key 配置种子时，安装身份由种子、Key ID 与选中账号 ID
 稳定派生；未配置时使用账号已持久化的安装 ID。Images、Search 和 Live 保留各自的安装头
+
+设备标识使用按账号记录 ID 派生的固定 UUID，同一账号跨 Key、安装种子、UA、凭据更新和服务重启保持一致。
+请求顶层、`client_metadata`、`metadata`、turn metadata、`telemetry` 和 `runtime` 容器中的
+`device_id`、`machine_id` 及 camelCase、连字符别名替换为该值，包含 JSON 字符串形式和
+`ws_request_header_*` 副本。`x-device-id`、`x-codex-device-id`、`oa-device-id`、`oai-device-id`、
+`x-machine-id` 和同名设备头也使用该值。未提供设备字段时不额外补造字段，输入消息和工具结果不参与设备身份改写。
+设备 UUID 与用于会话隔离的安装 UUID 分属不同用途，`installationSeed` 不影响设备 UUID
+
 `x-openai-internal-codex-residency` 和 `x-openai-account-routing-override` 分别由部署配置
 `openai.residency`、`openai.account_routing_override` 控制，配置值原样发送并覆盖客户端同名头，
 省略或 `null` 时删除对应请求头。配置说明见 [部署与运维](../deploy/README.md#启动后的运行设置)
@@ -753,14 +761,14 @@ OpenAI 上游错误 envelope 和允许下发的 opaque header 值也不由 canon
 `response.metadata` 的业务内容继续交付，仅其中的响应头沿用凭据、账号身份和逐跳头隔离规则。
 未改写的 WebSocket 文本不依赖 JSON 旁路解析成功；插件改写后的响应仍复核必要关联，原始 SSE 心跳
 和无法提取事实的未改写内容不构成协议失败。
-Images 固定使用 OpenAI Provider，不重建正文或映射模型字段；Provider 从原始 JSON 旁路提取图片模型，
-按[账号模型限制](#账号模型限制)选号，并复核插件改写后的模型。账号选择、鉴权头替换和端点路由
-不改变请求正文，成功与非容量失败响应正文保持原始字节。
+Images 固定使用 OpenAI Provider，不映射模型字段；Provider 从原始 JSON 旁路提取图片模型，
+按[账号模型限制](#账号模型限制)选号，并复核插件改写后的模型。请求中的设备身份按账号替换，
+其他正文保持原始字节，包括空白和重复业务键；成功与非容量失败响应正文保持原始字节。
 
 Images 排除已知为 Free 套餐的 OAuth 账号；套餐缺失或未知时不推断为 Free，API Key 账号不套用该套餐规则。
 其余账号仍需满足模型限制、额度等调度条件，实际生图权限由上游决定
 
-`/v1/alpha/search` 使用相同的 OpenAI Provider 原生端点边界：模型不映射，正文除会话 `id` 的账号归一及显式请求策略外原样转发，
+`/v1/alpha/search` 使用相同的 OpenAI Provider 原生端点边界：模型不映射，正文除会话 `id`、设备身份的账号归一及显式请求策略外原样转发，
 Provider 旁路读取请求中的 `model`，按[账号模型限制](#账号模型限制)选号。
 `x-codex-turn-metadata` 在移除客户端账号身份并按选中账号重写 installation ID 后转发；上游账号
 Authorization、Cookie、account ID、originator 和 User-Agent 均由代理安全重建。
@@ -2245,6 +2253,7 @@ HTTP 返回 `429`，`error.code` 为 `key_daily_budget_exceeded` 或 `key_weekly
 | [客户端身份](#provider-客户端身份) | `providerRequestProfiles`、`openaiClientProfile`、`xaiClientProfile` |
 | [请求位置](#请求位置) | `requestLocationEnabled`、`requestLocation` |
 | [隐私策略](#隐私策略) | `codexPrivacyPolicy` |
+| [OpenAI 遥测](#openai-遥测) | `openaiTelemetryEnabled` |
 | 模型映射 | `modelMappings` |
 | 凭据刷新 | `refreshMarginSeconds`、`refreshConcurrency` |
 | [并发与排队](#并发与排队) | `maxConcurrentPerAccount`、`maxWaitingPerKey`、`maxWaitingPerAccount`、`openaiGuardianReservedConcurrency`、`keyQueueTimeoutSeconds`、`accountQueueTimeoutSeconds`、`switchAccountOnQueueFailure` |
@@ -2258,6 +2267,14 @@ HTTP 返回 `429`，`error.code` 为 `key_daily_budget_exceeded` 或 `key_weekly
 | [账号连接测试](#账号连接测试) | `accountConnectionTestPrompt` |
 | [账号预热](#账号预热) | `accountWarmupEnabled`、`accountWarmupCron`、`accountWarmupModel` |
 | [主动额度重置卡](#主动额度重置卡) | `resetCreditOnLowWeeklyQuota`、`resetCreditLeadMinutes`、`resetCreditMaxWeeklyRemainingPercent` |
+
+### OpenAI 遥测
+
+`openaiTelemetryEnabled` 默认 `true`，控制网关 OpenAI 模型调用的 Analytics 事件与传输指标，
+涵盖普通请求、经 Core 发起的插件调用、连接测试和后台预热。
+保存后对新请求生效，已开始请求和重试沿用冻结设置；已排队事件与已采样指标继续导出。
+启动配置 `openai.telemetry.enabled: false` 仍关闭全部遥测，运行开关不能开启被启动配置禁用的出口。
+事件范围、请求同意字段与导出配置见[部署文档](../deploy/README.md#codex-传输遥测)，客户端事实字段见[指标采样](openai-telemetry.md#客户端事实合同)
 
 ### 历史保留
 

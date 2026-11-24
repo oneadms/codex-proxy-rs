@@ -135,7 +135,7 @@ async fn effort_values_reach_upstream_before_and_after_middleware() {
 }
 
 #[tokio::test]
-async fn independent_endpoints_send_opaque_headers_without_client_identity() {
+async fn independent_endpoints_preserve_business_bytes_and_scope_device_identity() {
     let store = Arc::new(MemoryAccountStore::default());
     create_account(&store, "acct_provider_contract").await;
     let server = MockServer::start().await;
@@ -148,6 +148,8 @@ async fn independent_endpoints_send_opaque_headers_without_client_identity() {
         ("x-future-business", "first"),
         ("x-future-business", "second"),
         ("x-codex-installation-id", "client-installation"),
+        ("oa-device-id", "client-device"),
+        ("x-machine-id", "client-machine"),
         ("x-openai-account-routing-override", "client-route"),
         ("x-openai-fedramp", "true"),
         ("traceparent", "client-trace"),
@@ -170,7 +172,7 @@ async fn independent_endpoints_send_opaque_headers_without_client_identity() {
         "/codex/alpha/search",
     ] {
         let raw = Bytes::from_static(
-            br#"{ "id":"test-search", "prompt":"synthetic", "future":1, "future":2 }"#,
+            br#"{ "id":"test-search", "prompt":"synthetic", "device_id":"client-device", "device_id":"client-device", "metadata":{"machineId":"client-machine"}, "input":{"device_id":"business-device"}, "future":1, "future":2 }"#,
         );
         let payload = RawJsonPayload::new("openai", raw.clone())
             .unwrap()
@@ -204,6 +206,16 @@ async fn independent_endpoints_send_opaque_headers_without_client_identity() {
         let sent = requests.last().unwrap();
         assert_eq!(sent.url.path(), endpoint);
         uuid::Uuid::parse_str(sent.headers["x-codex-installation-id"].to_str().unwrap()).unwrap();
+        let device_id = sent.headers["oa-device-id"].to_str().unwrap();
+        assert!(uuid::Uuid::parse_str(device_id).is_ok());
+        assert_ne!(device_id, "client-device");
+        assert_eq!(sent.headers["x-machine-id"], device_id);
+        let expected = Bytes::from(
+            std::str::from_utf8(&raw)
+                .unwrap()
+                .replace("client-device", device_id)
+                .replace("client-machine", device_id),
+        );
         assert!(
             !sent
                 .headers
@@ -219,9 +231,9 @@ async fn independent_endpoints_send_opaque_headers_without_client_identity() {
             assert_eq!(sent.headers[name], expected);
         }
         if endpoint.ends_with("search") {
-            assert_scoped_search_body(&sent.body, &raw);
+            assert_scoped_search_body(&sent.body, &expected);
         } else {
-            assert_eq!(sent.body, raw);
+            assert_eq!(sent.body, expected);
         }
         assert_eq!(
             captured_header_values(sent, "x-future-business"),

@@ -13,10 +13,11 @@ use serde_json::{Map, Value, json};
 use super::{
     CodexBackendClient, CodexWireProfile,
     analytics::{Analytics, Event, Route},
+    metadata::RequestMetadata,
 };
 use crate::transport::{
     CodexRequestContext, endpoints::endpoint_url, headers::build_codex_profile_headers,
-    profile::identity::app_server_client_identity, request::TURN_METADATA_KEYS,
+    profile::identity::app_server_client_identity,
 };
 
 const MAX_STARTED_ITEMS: usize = 256;
@@ -25,14 +26,21 @@ pub(super) struct HostedTools {
     analytics: Arc<Analytics>,
     route: Arc<Route>,
     base: Map<String, Value>,
+    image_metadata: Map<String, Value>,
     state: Mutex<State>,
 }
 
 #[derive(Default)]
 struct State {
     response_id: Option<String>,
-    started: HashMap<String, (&'static str, u64)>,
+    started: HashMap<String, StartedItem>,
     terminal: bool,
+}
+
+struct StartedItem {
+    kind: &'static str,
+    at_ms: u64,
+    metadata: Map<String, Value>,
 }
 
 impl HostedTools {
@@ -40,13 +48,14 @@ impl HostedTools {
         analytics: Arc<Analytics>,
         client: &CodexBackendClient,
         profile: &CodexWireProfile,
-        body: &Map<String, Value>,
+        metadata: &RequestMetadata<'_>,
         headers: &HeaderMap,
         context: CodexRequestContext<'_>,
     ) -> Option<Self> {
         if context.authorization.is_empty() {
             return None;
         }
+        let body = metadata.body;
         // 使用完成账号隔离和隐私规则后的出站身份，不能回退到本地原始 ID
         let identity: Map<String, Value> = [
             ("session_id", "session-id"),
@@ -64,36 +73,7 @@ impl HostedTools {
         let thread_id = codex_account_thread_id(body, &identity)?;
         let session_id = codex_account_session_id(body, &identity)?;
         let turn_id = codex_turn_id(body, &identity)?;
-        let body_metadata = TURN_METADATA_KEYS
-            .iter()
-            .find_map(|key| body.get(*key))
-            .or_else(|| {
-                TURN_METADATA_KEYS
-                    .iter()
-                    .find_map(|key| body.get("client_metadata")?.get(*key))
-            })
-            .and_then(|value| match value {
-                Value::String(raw) => serde_json::from_str::<Value>(raw).ok(),
-                Value::Object(_) => Some(value.clone()),
-                _ => None,
-            });
-        let header_metadata = identity
-            .get("turn_metadata")
-            .and_then(Value::as_str)
-            .and_then(|raw| serde_json::from_str::<Value>(raw).ok());
-        // 帧内元数据优先于握手快照，显式 null 不回退到旧线程或旧轮次的值
-        let request_sources = [
-            body.get("client_metadata").and_then(Value::as_object),
-            Some(body),
-            body_metadata.as_ref().and_then(Value::as_object),
-            header_metadata.as_ref().and_then(Value::as_object),
-        ];
-        let request_value = |field: &str, alias: &str| {
-            request_sources
-                .iter()
-                .flatten()
-                .find_map(|source| source.get(field).or_else(|| source.get(alias)))
-        };
+        let request_value = |field: &str, alias: &str| metadata.get(field, alias);
         let mut auth_headers = build_codex_profile_headers(profile).ok()?;
         let mut authorization = HeaderValue::from_str(context.authorization).ok()?;
         authorization.set_sensitive(true);
@@ -111,15 +91,9 @@ impl HostedTools {
             .get(USER_AGENT)
             .and_then(|value| value.to_str().ok())
             .and_then(app_server_client_identity);
-        let experimental_api_enabled = request_sources
-            .iter()
-            .flatten()
-            .find_map(|source| {
-                source
-                    .get("experimental_api_enabled")
-                    .or_else(|| source.get("experimentalApiEnabled"))
-                    .or_else(|| source.get("capabilities")?.get("experimentalApi"))
-            })
+        let experimental_api_enabled = metadata
+            .get("experimental_api_enabled", "experimentalApiEnabled")
+            .filter(|value| value.is_boolean() || value.is_null())
             .cloned()
             // 官方 TUI 与 Exec 的初始化声明均启用此能力，未知入口保留未知
             .unwrap_or_else(|| {
@@ -156,7 +130,9 @@ impl HostedTools {
                 "runtime_arch": if profile.arch == "arm64" { "aarch64" } else { &profile.arch }
             },
             "thread_source": request_value("thread_source", "threadSource"),
-            "subagent_source": request_value("subagent_source", "subagentSource"),
+            "subagent_source": request_value("subagent_source", "subagentSource")
+                .cloned()
+                .or_else(|| headers.get("x-openai-subagent")?.to_str().ok().map(|value| json!(value))),
             "parent_thread_id": headers.get("x-codex-parent-thread-id").and_then(|value| value.to_str().ok()),
             "tool_event_type": "model_tool_call",
             "execution_duration_ms": null,
@@ -167,6 +143,15 @@ impl HostedTools {
             "requested_additional_permissions": false,
             "requested_network_access": false
         });
+        let mut base = base.as_object()?.clone();
+        apply_tool_metadata(&mut base, request_value);
+        let mut image_metadata = Map::new();
+        // 存在性标记与对应原文属于同一事实，按来源合并，避免旧原文覆盖本帧 false
+        for source in metadata.sources().rev() {
+            apply_image_metadata(&mut image_metadata, |field, alias| {
+                source.get(field).or_else(|| source.get(alias))
+            });
+        }
         Some(Self {
             analytics,
             route: Arc::new(Route {
@@ -179,7 +164,8 @@ impl HostedTools {
                     context.account_id.unwrap_or_default()
                 ),
             }),
-            base: base.as_object()?.clone(),
+            base,
+            image_metadata,
             state: Mutex::new(State::default()),
         })
     }
@@ -203,40 +189,65 @@ impl HostedTools {
                     return;
                 };
                 if state.started.len() < MAX_STARTED_ITEMS {
-                    state
-                        .started
-                        .entry(id.to_owned())
-                        .or_insert((kind, now_ms()));
+                    state.started.entry(id.to_owned()).or_insert_with(|| {
+                        // 只保留可上报的摘要，开始事件不必与结束事件重复携带元数据
+                        let item = &value["item"];
+                        let get =
+                            |field: &str, alias: &str| item.get(field).or_else(|| item.get(alias));
+                        let mut metadata = Map::new();
+                        apply_tool_metadata(&mut metadata, get);
+                        if kind == "image_generation_call" {
+                            apply_image_metadata(&mut metadata, get);
+                        }
+                        StartedItem {
+                            kind,
+                            at_ms: now_ms(),
+                            metadata,
+                        }
+                    });
                 }
             }
             Some("response.output_item.done") => {
                 let Some((id, kind)) = hosted_item(value) else {
                     return;
                 };
-                let Some((started_kind, started_at)) = state.started.remove(id) else {
+                let Some(started) = state.started.remove(id) else {
                     return;
                 };
-                if kind != started_kind {
+                if kind != started.kind {
                     return;
                 }
                 let completed_at = now_ms();
                 let item = &value["item"];
                 let mut params = self.base.clone();
+                params.extend(started.metadata);
+                apply_tool_metadata(&mut params, |field, alias| {
+                    item.get(field).or_else(|| item.get(alias))
+                });
                 params.insert("item_id".into(), json!(id));
-                params.insert("originating_response_id".into(), json!(state.response_id));
-                params.insert("started_at_ms".into(), json!(started_at));
+                let response_id = state
+                    .response_id
+                    .as_ref()
+                    .map(|id| json!(id))
+                    .or_else(|| params.remove("originating_response_id"))
+                    .unwrap_or(Value::Null);
+                params.insert("originating_response_id".into(), response_id);
+                params.insert("started_at_ms".into(), json!(started.at_ms));
                 params.insert("completed_at_ms".into(), json!(completed_at));
                 params.insert(
                     "duration_ms".into(),
-                    json!(completed_at.checked_sub(started_at)),
+                    json!(completed_at.checked_sub(started.at_ms)),
                 );
                 let event_type = if kind == "web_search_call" {
                     web_search_params(&mut params, item);
                     "codex_web_search_event"
                 } else {
-                    image_generation_params(&mut params, item);
+                    image_generation_params(&mut params, item, &self.image_metadata);
                     "codex_image_generation_event"
                 };
+                if params.get("turn_trigger").is_some_and(Value::is_null) {
+                    params.remove("turn_trigger");
+                }
                 self.analytics.enqueue(
                     Arc::clone(&self.route),
                     Event {
@@ -267,15 +278,18 @@ fn hosted_item(value: &Value) -> Option<(&str, &'static str)> {
 
 fn web_search_params(params: &mut Map<String, Value>, item: &Value) {
     let action = &item["action"];
-    let action_kind = match action.get("type").and_then(Value::as_str) {
-        Some("search") => "search",
-        Some("open_page") => "open_page",
-        Some("find_in_page") => "find_in_page",
-        _ => "other",
-    };
+    let action_kind =
+        action
+            .as_object()
+            .map(|_| match action.get("type").and_then(Value::as_str) {
+                Some("search") => "search",
+                Some("open_page") => "open_page",
+                Some("find_in_page") => "find_in_page",
+                _ => "other",
+            });
     // 只计算查询存在性和数量，不保留搜索词、URL 或页面查找内容
     let query_present = match action_kind {
-        "search" => {
+        Some("search") => {
             if let Some(query) = action
                 .get("query")
                 .and_then(Value::as_str)
@@ -292,11 +306,11 @@ fn web_search_params(params: &mut Map<String, Value>, item: &Value) {
                     || (!first.is_empty() && queries.is_some_and(|queries| queries.len() > 1))
             }
         }
-        "open_page" => action
+        Some("open_page") => action
             .get("url")
             .and_then(Value::as_str)
             .is_some_and(|url| !url.trim().is_empty()),
-        "find_in_page" => {
+        Some("find_in_page") => {
             action.get("pattern").is_some_and(Value::is_string)
                 || action
                     .get("url")
@@ -305,7 +319,7 @@ fn web_search_params(params: &mut Map<String, Value>, item: &Value) {
         }
         _ => false,
     };
-    let query_count = (action_kind == "search")
+    let query_count = (action_kind == Some("search"))
         .then(|| {
             action
                 .get("queries")
@@ -329,7 +343,25 @@ fn web_search_params(params: &mut Map<String, Value>, item: &Value) {
     ]);
 }
 
-fn image_generation_params(params: &mut Map<String, Value>, item: &Value) {
+fn image_generation_params(
+    params: &mut Map<String, Value>,
+    item: &Value,
+    request_metadata: &Map<String, Value>,
+) {
+    for (field, default) in [
+        ("revised_prompt_present", json!(false)),
+        ("saved_path_present", json!(false)),
+        ("transparent_background", Value::Null),
+        ("imagegen_request_id", Value::Null),
+        ("generation_id", Value::Null),
+    ] {
+        params
+            .entry(field)
+            .or_insert_with(|| request_metadata.get(field).cloned().unwrap_or(default));
+    }
+    apply_image_metadata(params, |field, alias| {
+        item.get(field).or_else(|| item.get(alias))
+    });
     let failed = matches!(
         item.get("status").and_then(Value::as_str),
         Some("failed" | "error")
@@ -337,19 +369,125 @@ fn image_generation_params(params: &mut Map<String, Value>, item: &Value) {
     params.extend([
         ("tool_name".into(), json!("image_generation")),
         (
-            "revised_prompt_present".into(),
-            json!(item.get("revised_prompt").is_some_and(Value::is_string)),
-        ),
-        ("saved_path_present".into(), json!(false)),
-        ("transparent_background".into(), Value::Null),
-        ("imagegen_request_id".into(), Value::Null),
-        ("generation_id".into(), Value::Null),
-        (
             "terminal_status".into(),
             json!(if failed { "failed" } else { "completed" }),
         ),
         ("failure_kind".into(), json!(failed.then_some("tool_error"))),
     ]);
+}
+
+/// 只投影官方字段与类型；缺少客户端内部事实时保留基础默认值
+fn apply_tool_metadata<'a>(
+    params: &mut Map<String, Value>,
+    get: impl Fn(&str, &str) -> Option<&'a Value>,
+) {
+    for (field, alias) in [
+        ("cell_id", "cellId"),
+        ("parent_call_id", "parentCallId"),
+        ("parent_thread_id", "parentThreadId"),
+        ("originating_response_id", "originatingResponseId"),
+        ("subsequent_response_id", "subsequentResponseId"),
+    ] {
+        if let Some(value) = get(field, alias).filter(|value| value.is_null() || value.is_string())
+        {
+            params.insert(field.into(), value.clone());
+        }
+    }
+    if let Some(value) = get("turn_trigger", "turnTrigger") {
+        if value.is_string() {
+            params.insert("turn_trigger".into(), value.clone());
+        } else if value.is_null() {
+            // 官方在触发来源未知时省略该字段；null 仍要阻止开始事件的旧值回填
+            params.insert("turn_trigger".into(), Value::Null);
+        }
+    }
+    for (field, alias) in [
+        ("execution_duration_ms", "executionDurationMs"),
+        ("review_count", "reviewCount"),
+        ("guardian_review_count", "guardianReviewCount"),
+        ("user_review_count", "userReviewCount"),
+    ] {
+        if let Some(value) = get(field, alias).filter(|value| {
+            value.as_u64().is_some() || (field == "execution_duration_ms" && value.is_null())
+        }) {
+            params.insert(field.into(), value.clone());
+        }
+    }
+    for (field, alias) in [
+        (
+            "requested_additional_permissions",
+            "requestedAdditionalPermissions",
+        ),
+        ("requested_network_access", "requestedNetworkAccess"),
+    ] {
+        if let Some(value) = get(field, alias).filter(|value| value.is_boolean()) {
+            params.insert(field.into(), value.clone());
+        }
+    }
+    if let Some(value) = get("final_approval_outcome", "finalApprovalOutcome")
+        .and_then(Value::as_str)
+        .filter(|value| {
+            matches!(
+                *value,
+                "unknown"
+                    | "not_needed"
+                    | "config_allowed"
+                    | "policy_forbidden"
+                    | "guardian_approved"
+                    | "guardian_denied"
+                    | "guardian_aborted"
+                    | "user_approved"
+                    | "user_approved_for_session"
+                    | "user_denied"
+                    | "user_aborted"
+            )
+        })
+    {
+        params.insert("final_approval_outcome".into(), json!(value));
+    }
+}
+
+fn apply_image_metadata<'a>(
+    params: &mut Map<String, Value>,
+    get: impl Fn(&str, &str) -> Option<&'a Value>,
+) {
+    for (field, alias) in [
+        ("imagegen_request_id", "imagegenRequestId"),
+        ("generation_id", "generationId"),
+    ] {
+        if let Some(value) = get(field, alias).filter(|value| value.is_null() || value.is_string())
+        {
+            params.insert(field.into(), value.clone());
+        }
+    }
+    if let Some(value) = get("transparent_background", "transparentBackground")
+        .filter(|value| value.is_null() || value.is_boolean())
+    {
+        params.insert("transparent_background".into(), value.clone());
+    }
+    // 原文只用于判断存在性，不能把提示词或本地路径留在待发事件中
+    for (field, alias, content, content_alias) in [
+        (
+            "revised_prompt_present",
+            "revisedPromptPresent",
+            "revised_prompt",
+            "revisedPrompt",
+        ),
+        (
+            "saved_path_present",
+            "savedPathPresent",
+            "saved_path",
+            "savedPath",
+        ),
+    ] {
+        let present = get(content, content_alias)
+            .filter(|value| value.is_null() || value.is_string())
+            .map(Value::is_string)
+            .or_else(|| get(field, alias).and_then(Value::as_bool));
+        if let Some(present) = present {
+            params.insert(field.into(), json!(present));
+        }
+    }
 }
 
 fn now_ms() -> u64 {

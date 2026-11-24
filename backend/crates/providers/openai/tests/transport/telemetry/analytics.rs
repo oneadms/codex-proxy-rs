@@ -5,7 +5,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use gateway_core::operation::{GenerateRequest, ProtocolPayload};
 
 const ANALYTICS_PATH: &str = "/codex/analytics-events/events";
-const TURN_METADATA: &str = r#"{"thread_id":"019a8c90-38ff-7000-8000-000000000001","session_id":"019a8c90-38ff-7000-8000-000000000002","turn_id":"019a8c90-38ff-7000-8000-000000000003"}"#;
+pub(super) const TURN_METADATA: &str = r#"{"thread_id":"019a8c90-38ff-7000-8000-000000000001","session_id":"019a8c90-38ff-7000-8000-000000000002","turn_id":"019a8c90-38ff-7000-8000-000000000003"}"#;
 
 pub(super) fn analytics_settings() -> CodexTelemetrySettings {
     CodexTelemetrySettings {
@@ -66,20 +66,21 @@ pub(super) async fn payloads(server: &MockServer) -> Vec<Value> {
         .unwrap()
         .iter()
         .filter(|request| request.url.path() == ANALYTICS_PATH)
-        .map(|request| {
+        .flat_map(|request| {
             assert_eq!(request.headers["content-type"], "application/json");
             assert!(!request.headers.contains_key("cookie"));
             assert!(!request.headers.contains_key("x-api-key"));
             assert!(!request.headers.contains_key("x-private-header"));
             let payload: Value = serde_json::from_slice(&request.body).unwrap();
             assert_eq!(payload.as_object().unwrap().len(), 1);
-            assert_eq!(payload["events"].as_array().unwrap().len(), 1);
-            payload["events"][0].clone()
+            let events = payload["events"].as_array().unwrap();
+            assert!(!events.is_empty() && events.len() <= 256);
+            events.clone()
         })
         .collect()
 }
 
-fn http_request(headers: &[(&str, &str)]) -> CodexResponsesRequest {
+pub(super) fn http_request(headers: &[(&str, &str)]) -> CodexResponsesRequest {
     let payload = ProtocolPayload::json_object(
         "openai",
         codex_request("gpt-test", "private-model-prompt", Vec::new())
@@ -371,7 +372,7 @@ async fn pooled_websocket_keeps_analytics_bound_to_each_request() {
         let (stream, _) = listener.accept().await.unwrap();
         let mut websocket = accept_codex_test_websocket(stream).await;
         let mut frames = Vec::new();
-        for index in 0..2 {
+        for index in 0..4 {
             let frame = websocket.next().await.unwrap().unwrap();
             frames.push(serde_json::from_str::<Value>(frame.to_text().unwrap()).unwrap());
             for event in events_for(&[search(&format!("ws_pool_{index}"))]) {
@@ -384,7 +385,7 @@ async fn pooled_websocket_keeps_analytics_bound_to_each_request() {
         let _ = websocket.next().await;
         drop(websocket);
         let mut delivered = Vec::new();
-        for _ in 0..2 {
+        {
             let (mut stream, _) = listener.accept().await.unwrap();
             let request = crate::transport::read_http_request_with_body(&mut stream).await;
             let split = request
@@ -394,7 +395,8 @@ async fn pooled_websocket_keeps_analytics_bound_to_each_request() {
             let headers = String::from_utf8_lossy(&request[..split]);
             assert!(headers.starts_with("POST /codex/analytics-events/events "));
             assert!(headers.contains("authorization: Bearer access-token"));
-            delivered.push(serde_json::from_slice::<Value>(&request[split + 4..]).unwrap());
+            let payload: Value = serde_json::from_slice(&request[split + 4..]).unwrap();
+            delivered.extend(payload["events"].as_array().unwrap().clone());
             stream
                 .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
                 .await
@@ -409,17 +411,24 @@ async fn pooled_websocket_keeps_analytics_bound_to_each_request() {
     request.use_websocket = true;
     let handshake_metadata = json!({
         "session_id":"handshake-session", "thread_id":"handshake-thread", "turn_id":"handshake-turn",
-        "thread_source":"handshake-source", "subagent_source":"handshake-agent", "root_turn_id":"handshake-root"
+        "thread_source":"handshake-source", "subagent_source":"handshake-agent", "root_turn_id":"handshake-root",
+        "turn_trigger":"handshake-trigger", "cell_id":"handshake-cell", "review_count":9,
+        "analytics_enabled":true
     }).to_string();
-    for index in 0..2 {
+    for index in 0..4 {
         request.set_client_metadata(Some(json!({
             "turnId":format!("client-turn-{index}"),
+            "analyticsEnabled":index != 1,
             "threadSource":if index == 0 { json!({"feature":"automation"}) } else { Value::Null },
             "subagentSource":if index == 0 { json!("thread_spawn") } else { Value::Null },
-            "rootTurnId":if index == 0 { json!("client-root") } else { Value::Null }
+            "rootTurnId":if index == 0 { json!("client-root") } else { Value::Null },
+            "turnTrigger":if index == 0 { json!("client-trigger") } else { Value::Null },
+            "cellId":if index == 0 { json!("client-cell") } else { Value::Null },
+            "reviewCount":index
         })));
         let mut request_context = context("ws-account");
         request_context.turn_metadata = Some(&handshake_metadata);
+        let client = client.clone().with_telemetry_enabled(index != 3);
         let mut response = client
             .create_response_stream(&request, request_context)
             .await
@@ -435,10 +444,11 @@ async fn pooled_websocket_keeps_analytics_bound_to_each_request() {
         .unwrap()
         .unwrap();
     assert_eq!(delivered.len(), 2);
-    for (index, payload) in delivered.iter().enumerate() {
-        assert_eq!(payload["events"][0]["event_type"], "codex_web_search_event");
+    for (delivered_index, payload) in delivered.iter().enumerate() {
+        let index = delivered_index * 2;
+        assert_eq!(payload["event_type"], "codex_web_search_event");
         assert_eq!(
-            payload["events"][0]["event_params"]["item_id"],
+            payload["event_params"]["item_id"],
             format!("ws_pool_{index}")
         );
         for (field, alias) in [
@@ -446,11 +456,19 @@ async fn pooled_websocket_keeps_analytics_bound_to_each_request() {
             ("thread_source", "threadSource"),
             ("subagent_source", "subagentSource"),
             ("root_turn_id", "rootTurnId"),
+            ("cell_id", "cellId"),
+            ("review_count", "reviewCount"),
         ] {
             assert_eq!(
-                payload["events"][0]["event_params"][field],
+                payload["event_params"][field],
                 frames[index]["client_metadata"][alias]
             );
+        }
+        let params = &payload["event_params"];
+        if index == 0 {
+            assert_eq!(params["turn_trigger"], "client-trigger");
+        } else {
+            assert!(params.get("turn_trigger").is_none());
         }
     }
 }

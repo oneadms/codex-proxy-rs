@@ -1428,6 +1428,7 @@ impl RuntimeSnapshot {
         }
 
         Ok(RoutingPlan {
+            openai_telemetry_enabled: self.settings.values.openai_telemetry_enabled(),
             request_body_limit: self.responses_max_decompressed_body_bytes(),
             max_retry_after: std::time::Duration::from_secs(u64::from(
                 self.settings.values.max_retry_after_seconds,
@@ -1518,6 +1519,7 @@ impl RuntimeSnapshot {
             account_scope: Arc::clone(&account_scope),
         };
         Ok(RoutingPlan {
+            openai_telemetry_enabled: self.settings.values.openai_telemetry_enabled(),
             request_body_limit: self.responses_max_decompressed_body_bytes(),
             max_retry_after: std::time::Duration::from_secs(u64::from(
                 self.settings.values.max_retry_after_seconds,

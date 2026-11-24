@@ -82,6 +82,7 @@ impl CodexBackendClient {
             &mut headers,
             context.installation_id,
         );
+        self.scope_device_body(&mut upstream_body);
         self.apply_privacy(&mut upstream_body, &mut headers)?;
         let body =
             serde_json::to_vec(&upstream_body).map_err(CodexClientError::RequestBodyEncode)?;
@@ -290,6 +291,7 @@ impl CodexBackendClient {
         let mut body = serde_json::Value::Object(std::mem::take(websocket_request.body_mut()));
         profile.apply_context_versions(&mut body);
         super::correlation::scope_request(&mut body, &mut headers, context.installation_id);
+        self.scope_device_body(&mut body);
         let original_headers = self.privacy.as_ref().map(|_| headers.clone());
         self.apply_privacy(&mut body, &mut headers)?;
         if let Some(body) = body.as_object() {

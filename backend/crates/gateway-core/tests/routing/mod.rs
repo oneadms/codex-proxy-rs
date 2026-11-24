@@ -21,6 +21,7 @@ use gateway_core::routing::{
 mod privacy;
 mod request_settings;
 mod snapshot;
+mod telemetry;
 
 fn settings() -> gateway_core::settings::SettingsValues {
     gateway_core::settings::SettingsValues::new(3, "smart", BTreeMap::new(), None, None)

@@ -3,49 +3,93 @@
 use std::{sync::Arc, time::Duration};
 
 use opentelemetry::KeyValue;
-use serde_json::{Map, Value};
+use reqwest::header::HeaderMap;
+use serde_json::Value;
 
-use super::{CodexWireProfile, hosted_tools::HostedTools, metrics::Metrics, sanitize_tag};
+use super::{
+    CodexWireProfile, hosted_tools::HostedTools, metadata::RequestMetadata, metrics::Metrics,
+    record::Recorder, sanitize_tag,
+};
 
 #[derive(Clone)]
 pub(crate) struct SessionTelemetry {
-    metrics: Option<Arc<Metrics>>,
-    attributes: Vec<KeyValue>,
     analytics: Option<Arc<HostedTools>>,
+    pub(super) recorder: Option<Recorder>,
+    pub(super) observation: Option<Arc<super::activity::RequestObservation>>,
+    continuation: super::responses::Continuation,
+    reauth: bool,
 }
 
 impl SessionTelemetry {
     pub(super) fn new(
         metrics: Option<Arc<Metrics>>,
         profile: &CodexWireProfile,
-        body: &Map<String, Value>,
+        metadata: &RequestMetadata<'_>,
+        headers: &HeaderMap,
         auth_mode: &'static str,
         analytics: Option<HostedTools>,
     ) -> Self {
-        let source = match profile.originator.as_str() {
+        let inferred_source = match profile.originator.as_str() {
             "codex_cli_rs" | "codex-tui" | "codex-cli" => "cli",
             "codex_exec" => "exec",
             "codex_vscode" | "codex_desktop" => "vscode",
             "codex_mcp_server" => "mcp",
             _ => "unknown",
         };
-        Self {
-            metrics,
-            analytics: analytics.map(Arc::new),
-            attributes: vec![
-                KeyValue::new("auth_mode", auth_mode),
-                KeyValue::new("session_source", source),
-                KeyValue::new("originator", bounded_originator(&profile.originator)),
-                KeyValue::new(
-                    "model",
-                    sanitize_tag(
-                        body.get("model")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default(),
-                    ),
+        let source = match metadata
+            .get("session_source", "sessionSource")
+            .or_else(|| metadata.get("thread_source", "threadSource"))
+        {
+            Some(value) => value.as_str().unwrap_or("unknown").to_owned(),
+            None => metadata
+                .text("subagent_source", "subagentSource")
+                .map(|source| format!("subagent_{source}"))
+                .unwrap_or_else(|| inferred_source.to_owned()),
+        };
+        let mut attributes = vec![
+            KeyValue::new("auth_mode", auth_mode),
+            KeyValue::new("session_source", sanitize_tag(&source)),
+            KeyValue::new("originator", bounded_originator(&profile.originator)),
+            KeyValue::new(
+                "model",
+                sanitize_tag(
+                    metadata
+                        .body
+                        .get("model")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
                 ),
-                KeyValue::new("app.version", sanitize_tag(&profile.codex_version)),
-            ],
+            ),
+            KeyValue::new("app.version", sanitize_tag(&profile.codex_version)),
+        ];
+        if let Some(service) = metadata
+            .get("service_name", "serviceName")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+        {
+            attributes.push(KeyValue::new("service_name", sanitize_tag(service)));
+        }
+        let product_sku = headers
+            .get("x-openai-product-sku")
+            .and_then(|value| value.to_str().ok())
+            .filter(|value| !value.is_empty())
+            .map(|value| if value == "codex" { "codex" } else { "other" }.to_owned());
+        let recorder = metrics.as_ref().map(|metrics| Recorder {
+            metrics: Arc::clone(metrics),
+            attributes: attributes.clone(),
+            product_sku,
+            excluded: Vec::new(),
+        });
+        Self {
+            analytics: analytics.map(Arc::new),
+            recorder,
+            observation: None,
+            continuation: super::responses::Continuation::new(metadata),
+            reauth: metadata
+                .fact("websocket_connect")
+                .and_then(|value| value.get("reauth"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
         }
     }
 
@@ -56,19 +100,14 @@ impl SessionTelemetry {
         elapsed: Duration,
         tags: &[(&'static str, &str)],
     ) {
-        let Some(metrics) = &self.metrics else {
+        let Some(recorder) = &self.recorder else {
             return;
         };
-        let mut attributes = self.attributes.clone();
-        attributes.extend(
-            tags.iter()
-                .map(|(key, value)| KeyValue::new(*key, sanitize_tag(value))),
-        );
-        metrics.counter(counter, &attributes);
-        metrics.duration(
+        recorder.count(counter, 1, tags);
+        recorder.sample(
             histogram,
             elapsed.as_millis().min(i64::MAX as u128) as f64,
-            &attributes,
+            tags,
         );
     }
 
@@ -87,7 +126,10 @@ impl SessionTelemetry {
             "codex.websocket.connect",
             "codex.websocket.connect.duration_ms",
             duration,
-            &[("success", boolean(success)), ("reauth", "false")],
+            &[
+                ("success", boolean(success)),
+                ("reauth", boolean(self.reauth)),
+            ],
         );
     }
 
@@ -100,10 +142,30 @@ impl SessionTelemetry {
         );
     }
 
+    pub(crate) fn websocket_continuation(&self) {
+        if let Some(recorder) = &self.recorder {
+            self.continuation.record(
+                recorder,
+                self.observation
+                    .as_ref()
+                    .is_some_and(|observation| observation.after_prewarm()),
+            );
+        }
+    }
+
+    fn observe(&self, value: &Value) {
+        if let Some(analytics) = &self.analytics {
+            analytics.observe(value);
+        }
+        if let Some(observation) = &self.observation {
+            observation.observe(value);
+        }
+    }
+
     pub(crate) fn sse_event(&self, kind: &str, data: &str, duration: Duration) {
         let parsed = serde_json::from_str::<Value>(data);
-        if let (Some(analytics), Ok(value)) = (&self.analytics, &parsed) {
-            analytics.observe(value);
+        if let Ok(value) = &parsed {
+            self.observe(value);
         }
         let success = data.trim() == "[DONE]"
             || (kind != "response.failed"
@@ -130,8 +192,8 @@ impl SessionTelemetry {
 
     pub(crate) fn websocket_event(&self, bytes: &[u8], duration: Duration) {
         let parsed = serde_json::from_slice::<Value>(bytes);
-        if let (Some(analytics), Ok(value)) = (&self.analytics, &parsed) {
-            analytics.observe(value);
+        if let Ok(value) = &parsed {
+            self.observe(value);
         }
         let kind = match &parsed {
             Ok(value) => value
@@ -169,7 +231,7 @@ impl SessionTelemetry {
     }
 
     fn websocket_timing(&self, value: &Value) {
-        let Some(metrics) = &self.metrics else {
+        let Some(recorder) = &self.recorder else {
             return;
         };
         let Some(timing) = value.get("timing_metrics") else {
@@ -218,7 +280,7 @@ impl SessionTelemetry {
                 } else {
                     (value.round() as u64).min(i64::MAX as u64) as f64
                 };
-                metrics.duration(metric, value, &self.attributes);
+                recorder.sample(metric, value, &[]);
             }
         }
     }

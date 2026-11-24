@@ -1,5 +1,11 @@
 {
   "settings": {
+    "telemetry": {
+      "title": "OpenAI telemetry",
+      "description": "Control usage events and runtime metrics sent to OpenAI, effective for new requests after saving",
+      "enabled": "Enable telemetry reporting",
+      "help": "Applies to OpenAI model calls, account connection tests and background warmups, subject to the startup telemetry configuration"
+    },
     "connectionTest": {
       "title": "Account connection test",
       "defaultPrompt": "Default prompt",

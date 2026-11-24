@@ -1,5 +1,11 @@
 {
   "settings": {
+    "telemetry": {
+      "title": "OpenAI 遥测",
+      "description": "控制网关向 OpenAI 发送使用事件与运行指标，保存后对新请求生效",
+      "enabled": "启用遥测上报",
+      "help": "适用于 OpenAI 模型调用、账号连接测试和后台预热，启动配置关闭遥测时此开关不生效"
+    },
     "connectionTest": {
       "title": "账号连接测试",
       "defaultPrompt": "默认提示词",

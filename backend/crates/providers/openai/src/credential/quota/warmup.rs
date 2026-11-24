@@ -249,13 +249,24 @@ impl CodexCredentialQuotaService {
 
         let upstream_request = CodexResponsesRequest::from_body(body);
         let request_id = format!("warmup_{}", Uuid::now_v7().simple());
-        let client_for_account = match client.for_account(account) {
+        let mut client_for_account = match client.for_account(account) {
             Ok(c) => c,
             Err(error) => {
                 tracing::warn!(account_id = %account.id(), error = %error, "warmup client for account failed");
                 return false;
             }
         };
+        // 定时与额度桶预热共用模型收发边界，复用 Provider 的单一遥测生命周期
+        client_for_account.telemetry.clone_from(&self.telemetry);
+        let telemetry_enabled = self
+            .runtime_policy
+            .load_openai_telemetry_enabled()
+            .await
+            .unwrap_or_else(|_| {
+                tracing::warn!("OpenAI 预热遥测开关读取失败，本次不采样");
+                false
+            });
+        client_for_account = client_for_account.with_telemetry_enabled(telemetry_enabled);
         let context = crate::transport::CodexRequestContext::auxiliary(
             authorization.expose_secret(),
             account.upstream_account_id(),

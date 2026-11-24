@@ -6201,7 +6201,7 @@ async fn opaque_provider_options_do_not_change_openai_account_selection() {
 const KEY_INSTALLATION_SEED: &str = "3b11bc82-c666-417d-b9ff-2a34fd040385";
 
 #[tokio::test]
-async fn installation_seed_scopes_http_identity_and_cache_by_key_and_account() {
+async fn installation_seed_scopes_installation_and_keeps_account_device_identity_fixed() {
     let store = Arc::new(MemoryAccountStore::default());
     create_account(&store, "acct_scope_same").await;
     create_account(&store, "acct_scope_new").await;
@@ -6272,7 +6272,7 @@ async fn installation_seed_scopes_http_identity_and_cache_by_key_and_account() {
         let profile = provider.resolve_request_profile(&configuration).unwrap();
         let payload = ProtocolPayload::json_object(
             "openai",
-            json!({"model":"gpt-5.4","input":"hello","prompt_cache_key":"same-cache-key"})
+            json!({"model":"gpt-5.4","input":"hello","prompt_cache_key":"same-cache-key", "device_id":"client-device", "machine_id":"client-machine"})
                 .as_object()
                 .unwrap()
                 .clone(),
@@ -6314,6 +6314,21 @@ async fn installation_seed_scopes_http_identity_and_cache_by_key_and_account() {
     }
     let requests = server.received_requests().await.unwrap();
     let bodies: Vec<_> = requests.iter().map(captured_request_body).collect();
+    let devices: Vec<_> = bodies
+        .iter()
+        .map(|body| {
+            let id = body["device_id"].as_str().unwrap();
+            assert!(uuid::Uuid::parse_str(id).is_ok());
+            assert_ne!(id, "client-device");
+            assert_eq!(body["machine_id"], id);
+            id
+        })
+        .collect();
+    for index in [1, 3, 5, 6, 7, 8] {
+        assert_eq!(devices[0], devices[index]);
+    }
+    assert_eq!(devices[2], devices[4]);
+    assert_ne!(devices[0], devices[2]);
     let ids: Vec<_> = requests
         .iter()
         .zip(&bodies)

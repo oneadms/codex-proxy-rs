@@ -82,6 +82,7 @@ async fn websocket_metrics_count_physical_connects_and_unfiltered_timing_events(
     let client = client.with_websocket_pool(Arc::clone(&pool));
     let mut request = pooled_websocket_request("telemetry-conversation");
     request.use_websocket = true;
+    request.set_client_metadata(Some(json!({"telemetry":json!({"websocket_continuation":{"after_prewarm":true},"websocket_connect":{"reauth":true}}).to_string()})));
     for _ in 0..2 {
         let response = client
             .create_response(&request, request_context("ws", Some("ws-account")))
@@ -99,6 +100,17 @@ async fn websocket_metrics_count_physical_connects_and_unfiltered_timing_events(
     assert_eq!(
         metric(payload, "codex.websocket.request")["sum"]["dataPoints"][0]["asInt"],
         2
+    );
+    let continuation = &metric(payload, "codex.websocket.continuation")["sum"]["dataPoints"][0];
+    assert_eq!(continuation["asInt"], 2);
+    let tags = attributes(continuation);
+    assert_eq!(tags["mode"], "incremental");
+    assert_eq!(tags["reason"], "incremental");
+    assert_eq!(tags["phase"], "generation");
+    assert_eq!(tags["after_prewarm"], "true");
+    assert_eq!(
+        attributes(&metric(payload, "codex.websocket.connect")["sum"]["dataPoints"][0])["reauth"],
+        "true"
     );
     let events = metric(payload, "codex.websocket.event")["sum"]["dataPoints"]
         .as_array()

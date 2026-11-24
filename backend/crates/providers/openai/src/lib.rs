@@ -158,14 +158,20 @@ pub async fn initialize(
     if let Err(error) = catalog.restore().await {
         tracing::warn!(%error,"OpenAI model catalog could not be restored");
     }
-    let quota = Arc::new(CodexCredentialQuotaService::new(
-        repository.clone(),
-        profile.clone(),
-        http.clone(),
-        config.base_url().to_owned(),
-        ports.cooldowns(),
-        Arc::clone(&runtime_policy),
-    ));
+    let (telemetry, telemetry_worker) =
+        transport::telemetry::CodexTelemetry::initialize(config.telemetry.clone())
+            .map_err(|_| OpenAiInitializeError::Worker)?;
+    let quota = Arc::new(
+        CodexCredentialQuotaService::new(
+            repository.clone(),
+            profile.clone(),
+            http.clone(),
+            config.base_url().to_owned(),
+            ports.cooldowns(),
+            Arc::clone(&runtime_policy),
+        )
+        .with_telemetry(Arc::clone(&telemetry)),
+    );
     let profile_statistics = Arc::new(CodexCredentialProfileService::new(
         repository.clone(),
         profile.clone(),
@@ -185,7 +191,7 @@ pub async fn initialize(
         CodexCookiePolicy::official().map_err(|_| OpenAiInitializeError::CookiePolicy)?,
         upstream_info,
     ));
-    let (provider, telemetry_worker) = CodexProvider::new(
+    let provider = CodexProvider::new(
         selector,
         Arc::clone(&catalog),
         Arc::clone(&quota),
@@ -200,8 +206,7 @@ pub async fn initialize(
     .with_session_identity(session_identity)
     .with_timezone(config.timezone)
     .with_live_support(repository.clone())
-    .with_telemetry(config.telemetry.clone())
-    .map_err(|_| OpenAiInitializeError::Worker)?;
+    .with_telemetry(telemetry);
     let core_provider: Arc<dyn Provider> = Arc::new(provider);
     let token_client = Arc::new(
         credential::token_client::openai_token_client(

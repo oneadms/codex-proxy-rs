@@ -225,11 +225,10 @@ struct SelectedGenerate {
 impl CodexProvider {
     pub(crate) fn with_telemetry(
         mut self,
-        settings: crate::config::CodexTelemetrySettings,
-    ) -> Result<(Self, WorkerContribution), WorkerDefinitionError> {
-        let (client, worker) = self.client.with_telemetry(settings)?;
-        self.client = client;
-        Ok((self, worker))
+        telemetry: Arc<crate::transport::telemetry::CodexTelemetry>,
+    ) -> Self {
+        self.client.telemetry = Some(telemetry);
+        self
     }
     fn prepare_generate_request(
         &self,
@@ -1171,6 +1170,7 @@ impl CodexProvider {
                 .with_responses_api_base_url(lease.authentication().responses_api_base_url())
                 .with_routing_affinity(guardian_parent.map(|(_, affinity)| affinity))
                 .with_connection_budget(context.connection_budget().clone())
+                .with_telemetry_enabled(context.openai_telemetry_enabled())
                 .with_middleware_headers(middleware_headers)
                 .with_outbound_middleware(outbound_middleware)
                 .with_privacy(context.privacy(), context.cancellation().clone()),

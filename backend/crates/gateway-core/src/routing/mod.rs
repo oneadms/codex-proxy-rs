@@ -573,6 +573,7 @@ impl ProviderCandidate {
 /// 一次请求冻结的 Provider 尝试顺序
 #[derive(Debug, Clone)]
 pub struct RoutingPlan {
+    openai_telemetry_enabled: bool,
     account_error_protection: Arc<crate::account::CompiledAccountErrorProtection>,
     account_error_protection_revision: u64,
     request_body_limit: usize,
@@ -589,6 +590,11 @@ pub struct RoutingPlan {
 }
 
 impl RoutingPlan {
+    #[must_use]
+    pub const fn openai_telemetry_enabled(&self) -> bool {
+        self.openai_telemetry_enabled
+    }
+
     #[must_use]
     pub const fn account_error_protection_revision(&self) -> u64 {
         self.account_error_protection_revision

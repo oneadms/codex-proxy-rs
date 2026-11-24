@@ -1,7 +1,7 @@
 //! Codex Live / Realtime 语音通话的账号级上游透明传输。
 //!
 //! 语音通话 SDP 引导与 hangup 都是一次性账号级 POST；
-//! 正文与响应头（`Location` 携带 call id）均不经过 serde 往返，保持上游原始字节。
+//! 设备身份按账号改写，其余正文与响应头（`Location` 携带 call id）保持原始字节
 
 use std::time::Instant;
 
@@ -75,12 +75,13 @@ impl CodexBackendClient {
                 HeaderValue::from_str(content_type)?,
             );
         }
+        self.scope_device_headers(&mut headers);
         self.append_middleware_headers(&mut headers)?;
         super::correlation::scope_headers(&mut headers, context.installation_id);
         Ok(headers)
     }
 
-    /// 向 Codex realtime calls 端点发送账号级 POST；请求与响应正文不经过 serde。
+    /// 向 Codex realtime calls 端点发送账号级 POST，只替换请求中的设备身份字段
     ///
     /// 业务扩展头保留多值字节，身份、环境和追踪边界由各端点共用的头组装处理
     pub(crate) async fn post_live_call(
@@ -133,6 +134,7 @@ impl CodexBackendClient {
             .cloned()
             .unwrap_or_default()
             .exchange("http_json");
+        let body = self.scope_raw_device_body(body);
         let outbound = self.prepare_http_request(url, headers, body).await?;
         trace.headers(
             "upstream.request.headers",

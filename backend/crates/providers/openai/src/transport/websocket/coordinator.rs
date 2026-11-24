@@ -642,6 +642,9 @@ pub(crate) async fn execute_prepared_response_create_request_stream(
         "headers": gateway_core::diagnostics::diagnostic_headers(metadata.diagnostics.trace_headers.iter().map(|(name, value)| (name.as_str(), value.as_str()))),
     }));
     trace.capture("upstream.request.body", request.payload_text().as_bytes());
+    if let Some(telemetry) = &request.connection.telemetry {
+        telemetry.websocket_continuation();
+    }
     let started = Instant::now();
     let sent = send_websocket_request(&websocket, request.payload_text()).await;
     if let Some(telemetry) = &request.connection.telemetry {

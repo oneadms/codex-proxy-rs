@@ -75,6 +75,7 @@ impl CodexCredentialQuotaService {
             base_url,
             cooldowns,
             runtime_policy,
+            telemetry: None,
             scheduling: CodexQuotaSchedulingProjection::default(),
             reset_consume_locks: ResetCreditLocks::default(),
             initial_sync_delays: Arc::new(|| {
@@ -84,6 +85,14 @@ impl CodexCredentialQuotaService {
                 )
             }),
         }
+    }
+
+    pub(crate) fn with_telemetry(
+        mut self,
+        telemetry: Arc<crate::transport::telemetry::CodexTelemetry>,
+    ) -> Self {
+        self.telemetry = Some(telemetry);
+        self
     }
 
     /// 注入首查随机延迟采样器（测试用确定性节奏）；生产默认均匀

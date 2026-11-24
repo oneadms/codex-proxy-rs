@@ -157,7 +157,7 @@ pub(crate) async fn load_runtime_settings_from_pool(pool: &PgPool) -> StoreResul
                     audit_retention_days, min_codex_desktop_version,
                     min_codex_cli_version, updated_at, responses_max_decompressed_body_bytes, max_waiting_per_key, max_waiting_per_account, key_queue_timeout_seconds, account_queue_timeout_seconds, switch_account_on_queue_failure, max_retry_after_seconds, openai_guardian_reserved_concurrency, openai_account_affinity, max_account_rotations, openai_session_affinity_ttl_hours,
                     account_error_protection_json, account_error_protection_revision,
-                    account_warmup_enabled, account_warmup_cron, account_warmup_model, reset_credit_lead_minutes, reset_credit_max_weekly_remaining_percent, reset_credit_on_low_weekly_quota, account_connection_test_prompt
+                    account_warmup_enabled, account_warmup_cron, account_warmup_model, reset_credit_lead_minutes, reset_credit_max_weekly_remaining_percent, reset_credit_on_low_weekly_quota, account_connection_test_prompt, openai_telemetry_enabled
              from runtime_settings where id = 1",
         )
     .fetch_optional(pool)
@@ -172,6 +172,19 @@ pub(crate) async fn load_runtime_settings_from_pool(pool: &PgPool) -> StoreResul
 }
 
 impl ProviderRuntimePolicyPort for PgRuntimeSettingsRepository {
+    fn load_openai_telemetry_enabled(
+        &self,
+    ) -> futures::future::BoxFuture<'_, Result<bool, ProviderStoreError>> {
+        Box::pin(async move {
+            sqlx::query_scalar("select openai_telemetry_enabled from runtime_settings where id = 1")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|source| {
+                    crate::provider_unavailable("load OpenAI telemetry setting", source)
+                })
+        })
+    }
+
     fn claim_warmup_slot<'a>(
         &'a self,
         timezone: gateway_core::time::DeploymentTimeZone,
@@ -337,7 +350,7 @@ pub(crate) async fn load_runtime_settings_in_transaction(
                 audit_retention_days, min_codex_desktop_version,
                 min_codex_cli_version, updated_at, responses_max_decompressed_body_bytes, max_waiting_per_key, max_waiting_per_account, key_queue_timeout_seconds, account_queue_timeout_seconds, switch_account_on_queue_failure, max_retry_after_seconds, openai_guardian_reserved_concurrency, openai_account_affinity, max_account_rotations, openai_session_affinity_ttl_hours,
                 account_error_protection_json, account_error_protection_revision,
-                account_warmup_enabled, account_warmup_cron, account_warmup_model, reset_credit_lead_minutes, reset_credit_max_weekly_remaining_percent, reset_credit_on_low_weekly_quota, account_connection_test_prompt
+                account_warmup_enabled, account_warmup_cron, account_warmup_model, reset_credit_lead_minutes, reset_credit_max_weekly_remaining_percent, reset_credit_on_low_weekly_quota, account_connection_test_prompt, openai_telemetry_enabled
          from runtime_settings where id = 1",
     )
     .fetch_optional(&mut **transaction)
@@ -421,6 +434,7 @@ pub(crate) async fn update_runtime_settings_in_transaction(
                      reset_credit_on_low_weekly_quota = $34,
                      quota_reset_window_weights_json = $35,
                      account_connection_test_prompt = $36,
+                     openai_telemetry_enabled = $37,
 	                 updated_at = now()
 	             where id = 1
 	             returning config_revision",
@@ -469,6 +483,7 @@ pub(crate) async fn update_runtime_settings_in_transaction(
     .bind(update.values.reset_credit_on_low_weekly_quota)
     .bind(sqlx::types::Json(update.values.quota_reset_window_weights))
     .bind(&update.values.account_connection_test_prompt)
+    .bind(update.values.openai_telemetry_enabled)
     .fetch_optional(&mut **transaction)
     .await
     .map_err(|source| postgres_unavailable("update runtime settings in transaction", source))?
@@ -533,6 +548,7 @@ pub(crate) async fn update_admin_api_key_in_transaction(
 
 #[derive(sqlx::FromRow)]
 struct RuntimeSettingsRow {
+    openai_telemetry_enabled: bool,
     provider_request_profiles_json: sqlx::types::Json<
         std::collections::BTreeMap<String, serde_json::Map<String, serde_json::Value>>,
     >,
@@ -602,6 +618,7 @@ fn runtime_settings_from_row(row: RuntimeSettingsRow) -> StoreResult<RuntimeSett
         model_mappings: row.model_mappings_json.0,
         updated_at: row.updated_at,
         values: gateway_admin::model::settings::RuntimeSettingsValues {
+            openai_telemetry_enabled: row.openai_telemetry_enabled,
             refresh_margin_seconds: to_u64(row.refresh_margin_seconds)?,
             refresh_concurrency: to_u32(row.refresh_concurrency)?,
             max_concurrent_per_account: to_u32(row.max_concurrent_per_account)?,

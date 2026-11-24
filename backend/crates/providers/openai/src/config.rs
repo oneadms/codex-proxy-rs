@@ -16,7 +16,7 @@ use crate::{
     },
 };
 
-/// Codex 上游遥测设置，analytics 与指标出口分别控制
+/// Codex 上游遥测设置，analytics 同时控制内置 Statsig，显式 OTLP 独立控制
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct CodexTelemetrySettings {

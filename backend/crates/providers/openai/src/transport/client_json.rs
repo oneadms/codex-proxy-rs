@@ -16,7 +16,7 @@ use super::{
 };
 
 impl CodexBackendClient {
-    /// 向固定 Provider 端点发送 JSON，仅启用隐私规则时解码请求正文
+    /// 向固定 Provider 端点发送 JSON，身份改写保留其他字段的原始字节
     pub(crate) async fn post_raw_json(
         &self,
         endpoint_path: &'static str,
@@ -58,6 +58,7 @@ impl CodexBackendClient {
             "x-codex-turn-metadata",
             context.turn_metadata,
         );
+        self.scope_device_headers(&mut headers);
         self.append_middleware_headers(&mut headers)?;
         super::correlation::scope_headers(&mut headers, context.installation_id);
         let body = if self.privacy.is_some() {
@@ -76,6 +77,7 @@ impl CodexBackendClient {
             body
         };
 
+        let body = self.scope_raw_device_body(body);
         let trace = context
             .trace
             .cloned()

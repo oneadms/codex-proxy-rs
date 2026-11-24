@@ -1160,6 +1160,7 @@ where
                 .with_response_control(self.response_control.clone())
                 .with_request_profile(self.request_profiles.get(candidate.provider()).cloned())
                 .with_fast_mode(self.plan.fast_mode())
+                .with_openai_telemetry_enabled(self.plan.openai_telemetry_enabled())
                 .with_pricing(self.plan.pricing())
                 .with_request_location(self.plan.request_location().cloned())
                 .with_privacy(self.plan.privacy())

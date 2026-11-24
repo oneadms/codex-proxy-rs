@@ -1,7 +1,9 @@
 //! 官方 analytics 的有界队列、账号认证出口与重复事件隔离
 
-use std::{num::NonZeroUsize, sync::Mutex, time::Duration};
+use std::{collections::VecDeque, num::NonZeroUsize, sync::Mutex, time::Duration};
 
+use futures::{FutureExt as _, StreamExt as _, stream::FuturesUnordered};
+use gateway_core::task::{WorkerDaemonContext, WorkerTaskError};
 use lru::LruCache;
 use reqwest::{Client, header::HeaderMap};
 use serde::Serialize;
@@ -13,6 +15,8 @@ use tokio::sync::mpsc;
 const QUEUE_CAPACITY: usize = 256;
 const DEDUPE_CAPACITY: usize = 4096;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const BATCH_SIZE: usize = 256;
+const SEND_CONCURRENCY: usize = 4;
 pub(super) const FLUSH_TIMEOUT: Duration = Duration::from_secs(25);
 
 pub(super) struct Analytics {
@@ -80,11 +84,83 @@ impl Analytics {
     }
 }
 
-impl Delivery {
-    pub(super) async fn send(self) -> Result<(), ()> {
+struct Batch {
+    route: std::sync::Arc<Route>,
+    events: Vec<Event>,
+}
+
+/// 队列和发送 future 都归同一受监督任务持有，停机时继续消费至排空
+pub(super) async fn deliver(
+    receiver: &mut mpsc::Receiver<Delivery>,
+    context: &WorkerDaemonContext,
+) -> Result<(), WorkerTaskError> {
+    let mut pending = VecDeque::<Batch>::new();
+    let mut sending = FuturesUnordered::new();
+    let mut deliveries = Vec::with_capacity(BATCH_SIZE);
+    let mut closing = false;
+    let mut exhausted = false;
+    let mut failed = false;
+    loop {
+        while sending.len() < SEND_CONCURRENCY
+            && let Some(batch) = pending.pop_front()
+        {
+            sending.push(batch.send().boxed());
+        }
+        // 接收端 EOF 才确认排空，避免遗漏关闭前已取得入队许可的发送者
+        if exhausted && pending.is_empty() && sending.is_empty() {
+            return if failed {
+                Err(WorkerTaskError::safe("Codex analytics 上报失败"))
+            } else {
+                Ok(())
+            };
+        }
+        tokio::select! {
+            biased;
+            _ = context.cancellation().cancelled(), if !closing => {
+                receiver.close();
+                closing = true;
+            }
+            Some(result) = sending.next(), if !sending.is_empty() => {
+                if result.is_ok() {
+                    context.succeeded();
+                } else {
+                    // 失败批次不重试，也不重启共享指标调度
+                    tracing::warn!("Codex analytics 上报失败");
+                    failed |= closing;
+                }
+            }
+            count = receiver.recv_many(&mut deliveries, BATCH_SIZE),
+                if !exhausted && pending.is_empty() && sending.len() < SEND_CONCURRENCY => {
+                if count == 0 {
+                    closing = true;
+                    exhausted = true;
+                    continue;
+                }
+                for delivery in deliveries.drain(..) {
+                    // scope 包含账号出口；认证、画像和产品归因头必须完全相同才能混批
+                    if let Some(batch) = pending.iter_mut().find(|batch| {
+                        batch.route.scope == delivery.route.scope
+                            && batch.route.endpoint == delivery.route.endpoint
+                            && batch.route.headers == delivery.route.headers
+                    }) {
+                        batch.events.push(delivery.event);
+                    } else {
+                        pending.push_back(Batch {
+                            route: delivery.route,
+                            events: vec![delivery.event],
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl Batch {
+    async fn send(self) -> Result<(), ()> {
         #[derive(Serialize)]
         struct Envelope {
-            events: [Event; 1],
+            events: Vec<Event>,
         }
         let response = self
             .route
@@ -93,7 +169,7 @@ impl Delivery {
             .headers(self.route.headers.clone())
             .timeout(REQUEST_TIMEOUT)
             .json(&Envelope {
-                events: [self.event],
+                events: self.events,
             })
             .send()
             .await

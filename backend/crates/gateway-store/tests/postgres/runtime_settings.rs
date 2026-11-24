@@ -22,6 +22,7 @@ pub(super) fn settings_with_margin(refresh_margin_seconds: u64) -> RuntimeSettin
             ("grok-latest".to_owned(), "grok-4.5".to_owned()),
         ]),
         values: gateway_admin::model::settings::RuntimeSettingsValues {
+            openai_telemetry_enabled: true,
             codex_privacy_policy: Default::default(),
             request_location_enabled: false,
             request_location: Default::default(),
@@ -62,6 +63,50 @@ pub(super) fn settings_with_margin(refresh_margin_seconds: u64) -> RuntimeSettin
 fn runtime_settings_keep_account_rotation_global() {
     let settings = settings_with_margin(3_600);
     assert!(settings.validate().is_ok());
+}
+
+#[tokio::test]
+async fn openai_telemetry_setting_reaches_runtime_snapshots_and_background_policy() {
+    use gateway_core::provider_ports::ProviderRuntimePolicyPort;
+    use gateway_store::postgres::{PgRuntimeSnapshotRepository, RuntimeSnapshotRepository};
+    let Some(database) = TestDatabase::create("openai_telemetry").await else {
+        return;
+    };
+    let repository = PgRuntimeSettingsRepository::new(database.pool.clone());
+    assert!(
+        repository
+            .load_runtime_settings()
+            .await
+            .unwrap()
+            .values
+            .openai_telemetry_enabled
+    );
+    assert!(repository.load_openai_telemetry_enabled().await.unwrap());
+    for enabled in [false, true] {
+        let mut update = settings_with_margin(300);
+        update.values.openai_telemetry_enabled = enabled;
+        let revision = repository.update_runtime_settings(update).await.unwrap();
+        let snapshot = PgRuntimeSnapshotRepository::new(database.pool.clone())
+            .load_runtime_snapshot()
+            .await
+            .unwrap();
+        assert_eq!(snapshot.settings.openai_telemetry_enabled(), enabled);
+        assert_eq!(snapshot.config_revision, revision);
+        assert_eq!(
+            repository.load_openai_telemetry_enabled().await.unwrap(),
+            enabled
+        );
+        assert_eq!(
+            repository
+                .load_runtime_settings()
+                .await
+                .unwrap()
+                .values
+                .openai_telemetry_enabled,
+            enabled
+        );
+    }
+    database.close().await;
 }
 
 #[tokio::test]

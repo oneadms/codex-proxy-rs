@@ -183,6 +183,7 @@ pub struct CodexCredentialQuotaService {
     base_url: String,
     cooldowns: Arc<dyn ProviderCooldownPort>,
     runtime_policy: Arc<dyn ProviderRuntimePolicyPort>,
+    telemetry: Option<Arc<crate::transport::telemetry::CodexTelemetry>>,
     scheduling: CodexQuotaSchedulingProjection,
     reset_consume_locks: ResetCreditLocks,
     /// 首查随机延迟采样器；测试注入固定值获得确定性节奏。

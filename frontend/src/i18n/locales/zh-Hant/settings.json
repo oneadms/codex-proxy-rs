@@ -1,5 +1,11 @@
 {
   "settings": {
+    "telemetry": {
+      "title": "OpenAI 遙測",
+      "description": "控制閘道向 OpenAI 傳送使用事件與執行指標，儲存後對新請求生效",
+      "enabled": "啟用遙測回報",
+      "help": "適用於 OpenAI 模型呼叫、帳號連線測試和背景預熱，啟動設定關閉遙測時此開關不生效"
+    },
     "connectionTest": {
       "title": "帳號連線測試",
       "defaultPrompt": "預設提示詞",

@@ -40,6 +40,7 @@ export interface SmartSchedulingConfig {
 }
 
 export interface RuntimeSettings {
+  openaiTelemetryEnabled: boolean
   configRevision: number
   smartScheduling: SmartSchedulingConfig
   smartSchedulingDefaults: SmartSchedulingConfig

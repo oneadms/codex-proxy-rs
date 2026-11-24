@@ -695,7 +695,9 @@ impl OpenAiUpstreamProtocol {
 /// Codex HTTP/SSE 上游客户端
 #[derive(Clone)]
 pub struct CodexBackendClient {
+    pub(super) device_id: Option<String>,
     pub(crate) telemetry: Option<Arc<super::telemetry::CodexTelemetry>>,
+    pub(super) telemetry_enabled: bool,
     pub(crate) peer_route: Option<reqwest::header::HeaderValue>,
     pub(super) routing_affinity: Option<super::routing_affinity::ChatGptRoutingAffinity>,
     pub(super) privacy: Option<(
@@ -720,6 +722,13 @@ pub struct CodexBackendClient {
 }
 
 impl CodexBackendClient {
+    /// 请求冻结的运行开关；启动配置仍决定遥测出口是否可用
+    #[must_use]
+    pub const fn with_telemetry_enabled(mut self, enabled: bool) -> Self {
+        self.telemetry_enabled = enabled;
+        self
+    }
+
     pub(crate) const fn profile_state(&self) -> &CodexWireProfileState {
         &self.profile
     }
@@ -738,7 +747,9 @@ impl CodexBackendClient {
     ) -> Self {
         let base_url = base_url.into().trim_end_matches('/').to_string();
         Self {
+            device_id: None,
             telemetry: None,
+            telemetry_enabled: true,
             peer_route: None,
             routing_affinity: None,
             privacy: None,
@@ -887,6 +898,9 @@ impl CodexBackendClient {
         account: &gateway_core::account::ProviderAccount,
     ) -> Result<Self, CodexClientError> {
         let mut client = self.clone();
+        client.device_id = Some(super::device_identity::account_device_id(
+            account.id().as_str(),
+        ));
         client.outbound_proxy = account.outbound_proxy().cloned();
         client.egress_key = egress_key(account.id().as_str(), account.outbound_proxy());
         if account.authentication_kind() == crate::CODEX_AUTHENTICATION_KIND_API_KEY {

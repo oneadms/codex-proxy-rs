@@ -36,6 +36,7 @@ pub type ProviderRequestProfileUpdates =
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeSettingsFields {
+    pub openai_telemetry_enabled: bool,
     pub codex_privacy_policy: gateway_core::settings::privacy::CodexPrivacyPolicy,
     pub request_location_enabled: bool,
     pub request_location: gateway_core::account::RequestLocation,
@@ -747,6 +748,7 @@ impl RuntimeSettingsFields {
         self,
     ) -> Result<gateway_admin::model::settings::RuntimeSettingsValues, WireValidationError> {
         let values = gateway_admin::model::settings::RuntimeSettingsValues {
+            openai_telemetry_enabled: self.openai_telemetry_enabled,
             codex_privacy_policy: self.codex_privacy_policy,
             request_location_enabled: self.request_location_enabled,
             request_location: self
@@ -797,6 +799,7 @@ impl RuntimeSettingsFields {
 impl From<gateway_admin::model::settings::RuntimeSettingsValues> for RuntimeSettingsFields {
     fn from(settings: gateway_admin::model::settings::RuntimeSettingsValues) -> Self {
         crate::admin::settings::RuntimeSettingsFields {
+            openai_telemetry_enabled: settings.openai_telemetry_enabled,
             codex_privacy_policy: settings.codex_privacy_policy,
             request_location_enabled: settings.request_location_enabled,
             request_location: settings.request_location,

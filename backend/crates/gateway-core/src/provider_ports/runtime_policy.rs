@@ -5,6 +5,11 @@ use crate::{account::OpaqueProviderData, identity::ProviderKind, routing::Config
 use futures::future::BoxFuture;
 
 pub trait ProviderRuntimePolicyPort: Send + Sync {
+    /// 后台 OpenAI 模型操作在发起请求前读取管理端遥测开关
+    fn load_openai_telemetry_enabled(&self) -> BoxFuture<'_, Result<bool, ProviderStoreError>> {
+        Box::pin(async { Ok(true) })
+    }
+
     /// 后台模型操作读取 Provider 全局画像，不读取单个 Client Key 的覆盖
     fn load_request_profile<'a>(
         &'a self,

@@ -35,7 +35,7 @@ fn workspace_member_list_matches_the_frozen_dag_scope() {
         .expect("Cargo packages")
         .iter()
         .map(|package| {
-            Path::new(package["manifest_path"].as_str().expect("package manifest"))
+            cargo_metadata_path(&package["manifest_path"])
                 .parent()
                 .expect("package directory")
                 .strip_prefix(&root)
@@ -735,12 +735,12 @@ fn test_source_roots() -> BTreeMap<PathBuf, Vec<String>> {
     let metadata = cargo_metadata_json();
     let mut roots = BTreeMap::<PathBuf, Vec<String>>::new();
     for package in metadata["packages"].as_array().expect("Cargo packages") {
-        let root = Path::new(package["manifest_path"].as_str().expect("package manifest"))
+        let root = cargo_metadata_path(&package["manifest_path"])
             .parent()
             .expect("package directory")
             .join("tests");
         for target in package["targets"].as_array().expect("Cargo targets") {
-            let source = Path::new(target["src_path"].as_str().expect("target source"));
+            let source = cargo_metadata_path(&target["src_path"]);
             if let Ok(relative) = source.strip_prefix(&root) {
                 roots
                     .entry(root.clone())
@@ -890,6 +890,13 @@ pub(super) fn backend_root() -> PathBuf {
         .expect("backend workspace root")
 }
 
+fn cargo_metadata_path(value: &serde_json::Value) -> PathBuf {
+    // 与工作区根使用同一规范路径，避免 Windows 的普通路径和 \\?\ 路径无法比较
+    Path::new(value.as_str().expect("Cargo path"))
+        .canonicalize()
+        .expect("canonical Cargo path")
+}
+
 fn cargo_metadata_json() -> &'static serde_json::Value {
     static METADATA: OnceLock<serde_json::Value> = OnceLock::new();
     METADATA.get_or_init(|| {
@@ -914,9 +921,7 @@ fn dependency_names(member: &str) -> Vec<String> {
         .as_array()
         .expect("Cargo packages")
         .iter()
-        .find(|package| {
-            Path::new(package["manifest_path"].as_str().expect("package manifest")) == manifest
-        })
+        .find(|package| cargo_metadata_path(&package["manifest_path"]) == manifest)
         .expect("workspace member");
     package["dependencies"]
         .as_array()

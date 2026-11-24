@@ -435,6 +435,7 @@ host:
 | 设置 | 入口与边界 |
 | --- | --- |
 | 上游客户端身份 | “系统设置 → 上游配置 → 客户端身份”；Key 可按 Provider 覆盖，OpenAI Key 可独立配置[安装身份种子](../docs/api.md#key-客户端身份) |
+| OpenAI 遥测 | “系统设置 → 上游配置 → OpenAI 遥测”；默认开启，保存后控制新请求的事件与指标采样 |
 | 并发与排队 | “系统设置 → 运行设置”；Key 与账号分别设置排队容量和超时，可选择账号排队失败后换号，见[排队规则](../docs/api.md#并发与排队) |
 | 账号错误保护 | “系统设置 → 运行设置 → 错误保护”；默认关闭，按[自定义规则](../docs/api.md#账号错误保护)暂停账号调度 |
 | 连接测试提示词 | “系统设置 → 运行设置 → 账号连接测试”；所有账号共用默认提示词 |
@@ -458,14 +459,21 @@ OTLP HTTP JSON、Delta 聚合、直方图边界和 Statsig 指标过滤规则导
 调试构建默认关闭内置 Statsig，自定义 OTLP 仍可用于联调
 内置 Statsig 按官方名单过滤 API 请求计数、耗时和部分引擎指标，自定义 OTLP 保留这些指标
 
-采集包含实际 API 状态与耗时、WS 新建连接与消息收发、SSE 事件，以及上游 WS timing 事件中的引擎耗时。
+采样覆盖官方集中目录的 82 项指标入口，包括传输、推理重放、轮次、目录和客户端生命周期。
+请求与响应可见事实优先，缺少客户端本地测量时使用模拟值；具体来源、触发条件和元数据合同见[指标采样](../docs/openai-telemetry.md)。
+存在采样入口不代表每次请求都会触发所有指标，也不代表涵盖官方其他模块分散定义的全部指标。
 资源和标签使用本次上游客户端画像的版本、系统、来源及模型，按账号出口独立聚合并复用同一代理；
 指标正文不包含提示词、完整请求、账号 ID 或账号认证头。
-OAuth 与 Responses API Key 账号分别使用 `chatgpt`、`api_key` 认证标签；Messages 协议和 CPR 互联转发不生成这组指标
+OAuth 与 Responses API Key 账号分别使用 `Chatgpt`、`ApiKey` 认证标签；Messages 协议和 CPR 互联转发不生成这组指标
+定时预热与额度桶预热的真实 Responses 请求同样采样，预热不生成用户轮次 analytics
 上报异步执行，失败不改变模型响应；关闭时在 Host 后台清理预算内尝试导出尚存指标
 
-启动配置 `openai.telemetry.enabled: false` 关闭全部网关遥测，
-`openai.telemetry.metrics_exporter.type: none` 仅关闭指标，`openai.telemetry.analytics_enabled: false` 仅关闭 analytics。
+管理端“OpenAI 遥测”开关控制普通模型调用、经 Core 发起的插件调用、连接测试和后台预热，
+保存后新请求使用新设置，在途请求、重试与已采样数据继续按原设置完成。
+启动配置 `openai.telemetry.enabled: false` 关闭全部网关遥测，管理端不能覆盖启动禁用，
+`openai.telemetry.metrics_exporter.type: none` 仅关闭指标。
+`openai.telemetry.analytics_enabled: false` 按官方同意规则同时关闭 analytics 和内置 Statsig，显式配置的 OTLP 收集器仍采样导出。
+本次请求的 `analytics_enabled: false` 或驼峰别名同样关闭该请求的 analytics 与内置 Statsig；请求不能覆盖网关关闭设置。
 自定义收集器使用以下配置，地址须包含完整指标路径；`headers` 仅用于收集器认证，修改后重启应用
 
 ```yaml
@@ -485,12 +493,17 @@ analytics 默认启用，按[官方事件协议](https://github.com/openai/codex
 目前采集 Responses HTTP/SSE 与 WS 中有完整开始、结束记录的 `codex_web_search_event` 和 `codex_image_generation_event`，
 使用所选 OAuth 账号的认证、代理及本次冻结的客户端画像，内部调用标为 `in_process`。
 事件中的客户端名称和版本从实际 UA 提取，优先使用末尾客户端后缀，没有后缀时读取前部的 `名称/版本`，自定义 UA 同样生效；无法提取时保留未知
-`thread_source`、`subagent_source` 和 `root_turn_id` 读取本次请求的同名字段或驼峰别名，保留显式 `null`，不推断线程关系。
+`thread_source`、`subagent_source`、`root_turn_id`、父线程及工具调用关联字段读取本次请求的同名字段或驼峰别名，保留显式 `null`，不推断线程关系。
+子代理来源同时识别官方 turn metadata 中的 `subagent_kind` 及 `x-openai-subagent`，帧内声明优先于请求头。
 优先读取本帧 `client_metadata` 的直接字段，再读取顶层字段、帧内 turn metadata，最后回退到请求头中的 turn metadata。
-实验能力优先使用请求中的声明，包括 `false` 和 `null`；缺省时按已核实的官方 TUI、Exec 初始化声明使用 `true`，其他入口保留未知
+实验能力优先使用请求中的声明，包括 `false` 和 `null`；缺省时按已核实的官方 TUI、Exec 初始化声明使用 `true`，其他入口保留未知。
+`turn_trigger` 读取明确的触发来源，未知时按官方规则省略。审批计数、权限标记和内部执行时长使用明确提供的元数据，缺省分别保留 `0`、`false` 和 `null`，审批结果缺省为 `unknown`。
+生图的透明背景、请求及生成 ID、改写提示词和保存路径存在性优先使用实际工具事件，再使用请求中的明确值；没有来源的字段保留官方默认值。
+开始事件中的摘要会保留到结束事件，结束事件的显式值优先；改写提示词和保存路径只判断存在性，不保留原文
 
 事件使用已完成账号隔离和隐私处理的会话身份，并在账号内去重。
-队列最多保留 256 条待发事件，请求超时 10 秒，关闭时在最多 25 秒内尝试排空；发送失败不重试，不影响模型响应。
+队列最多保留 256 条待发事件，每轮最多取 256 条，按账号出口、目标地址、认证、客户端画像头和产品归因分组批量发送，最多并发 4 个批次。
+请求超时 10 秒，关闭时在最多 25 秒内尝试排空队列及在途批次；发送失败不重试，不影响模型响应。
 API Key 账号按官方资格规则不发送这两类事件；调试构建也可发送 analytics，不受内置 Statsig 开关影响。
 事件只包含工具类型、状态、观测时间和查询数量等摘要，不包含搜索词、URL、提示词或图片正文。
 客户端的本地工具执行、线程归档、界面操作和完整用户轮次仍由实际执行这些操作的客户端上报

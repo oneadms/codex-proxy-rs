@@ -233,6 +233,7 @@ impl CodexBackendClient {
         };
         insert_optional_protocol_header(&mut headers, "x-codex-routing-hint", Some(&routing_hint));
         append_passthrough_headers(&mut headers, &request.passthrough_headers);
+        self.scope_device_headers(&mut headers);
         self.append_middleware_headers(&mut headers)?;
         Ok(headers)
     }

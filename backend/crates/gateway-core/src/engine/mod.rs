@@ -282,6 +282,7 @@ impl ContinuationAttempt {
 /// Provider 每次执行可见的 request-local context
 #[derive(Debug, Clone)]
 pub struct RequestAttemptContext {
+    openai_telemetry_enabled: bool,
     account_error_protection: Option<account_protection::ProtectionContext>,
     request_body_limit: Option<usize>,
     lease_metadata: Option<Arc<crate::provider_ports::ProviderLeaseMetadata>>,
@@ -309,6 +310,12 @@ pub struct RequestAttemptContext {
 }
 
 impl RequestAttemptContext {
+    #[must_use]
+    pub const fn with_openai_telemetry_enabled(mut self, enabled: bool) -> Self {
+        self.openai_telemetry_enabled = enabled;
+        self
+    }
+
     fn with_account_error_protection(
         mut self,
         protection: Option<account_protection::ProtectionContext>,
@@ -398,6 +405,7 @@ impl RequestAttemptContext {
     #[must_use]
     pub fn new(request_id: ModelRequestId, client_api_key_ref: ClientApiKeyId) -> Self {
         Self {
+            openai_telemetry_enabled: true,
             account_error_protection: None,
             response_control: None,
             request_body_limit: None,
@@ -660,6 +668,11 @@ impl AttemptContext {
     #[must_use]
     pub const fn fast_mode(&self) -> FastMode {
         self.request.fast_mode
+    }
+
+    #[must_use]
+    pub const fn openai_telemetry_enabled(&self) -> bool {
+        self.request.openai_telemetry_enabled
     }
 
     #[must_use]

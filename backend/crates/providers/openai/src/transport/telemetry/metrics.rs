@@ -56,7 +56,7 @@ pub(super) struct Metrics {
     meter: Meter,
     statsig: bool,
     counters: Mutex<HashMap<&'static str, Counter<u64>>>,
-    durations: Mutex<HashMap<&'static str, Histogram<f64>>>,
+    histograms: Mutex<HashMap<&'static str, Histogram<f64>>>,
     pending: AtomicBool,
 }
 
@@ -125,12 +125,12 @@ impl Metrics {
             meter,
             statsig,
             counters: Mutex::new(HashMap::new()),
-            durations: Mutex::new(HashMap::new()),
+            histograms: Mutex::new(HashMap::new()),
             pending: AtomicBool::new(false),
         })
     }
 
-    pub(super) fn counter(&self, name: &'static str, attributes: &[KeyValue]) {
+    pub(super) fn add(&self, name: &'static str, value: u64, attributes: &[KeyValue]) {
         if self.statsig && STATSIG_DISABLED.contains(&name) {
             return;
         }
@@ -139,25 +139,41 @@ impl Metrics {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .entry(name)
             .or_insert_with(|| self.meter.u64_counter(name).build())
-            .add(1, attributes);
+            .add(value.min(i64::MAX as u64), attributes);
         self.pending.store(true, Ordering::Release);
     }
 
-    pub(super) fn duration(&self, name: &'static str, value: f64, attributes: &[KeyValue]) {
+    pub(super) fn histogram(&self, name: &'static str, value: f64, attributes: &[KeyValue]) {
         if self.statsig && STATSIG_DISABLED.contains(&name) {
             return;
         }
-        self.durations
+        if !value.is_finite() || value < 0.0 {
+            return;
+        }
+        let value = if matches!(
+            name,
+            "codex.responses_api_engine_iapi_tbt.duration_ms"
+                | "codex.responses_api_engine_service_tbt.duration_ms"
+        ) {
+            value
+        } else {
+            value.min(i64::MAX as f64).floor()
+        };
+        self.histograms
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .entry(name)
             .or_insert_with(|| {
-                self.meter
-                    .f64_histogram(name)
-                    .with_unit("ms")
-                    .with_description("Duration in milliseconds.")
-                    .with_boundaries(DURATION_BOUNDARIES.to_vec())
-                    .build()
+                let mut instrument = self.meter.f64_histogram(name);
+                if name.ends_with("_ms") {
+                    instrument = instrument
+                        .with_unit("ms")
+                        .with_description("Duration in milliseconds.");
+                }
+                if let Some(boundaries) = boundaries(name) {
+                    instrument = instrument.with_boundaries(boundaries);
+                }
+                instrument.build()
             })
             .record(value, attributes);
         self.pending.store(true, Ordering::Release);
@@ -180,6 +196,62 @@ impl Metrics {
         }
         Ok(())
     }
+}
+
+fn boundaries(name: &str) -> Option<Vec<f64>> {
+    // 普通数量直方图沿用 SDK 默认桶；仅覆盖官方显式指定的桶和单位
+    Some(match name {
+        "codex.responses.reasoning_items_removed" => {
+            vec![0., 1., 2., 4., 8., 16., 32., 64., 128., 256.]
+        }
+        "codex.guardian.review.truncation.bytes" => vec![
+            0., 1., 2., 4., 8., 16., 64., 256., 1024., 4096., 16384., 65536., 262144., 1048576.,
+            4194304., 8388608., 16777216.,
+        ],
+        "codex.tools.registered" => vec![
+            0., 1., 2., 5., 10., 20., 30., 50., 75., 100., 150., 200., 300., 500., 750., 1000.,
+            2000., 5000., 10000., 20000.,
+        ],
+        "codex.thread.skills.enabled_total" | "codex.thread.skills.kept_total" => {
+            (0..=512).map(f64::from).collect()
+        }
+        "codex.thread.skills.truncated" => vec![0., 1.],
+        "codex.thread.skills.description_truncated_chars" => log_boundaries(17.),
+        "codex.tools.spec_description_bytes" | "codex.tools.exec_update_bytes" => {
+            log_boundaries(20.)
+        }
+        "codex.additional_context.value_bytes" => {
+            let mut values = log_boundaries(22.);
+            values.push(4096.);
+            values.sort_by(f64::total_cmp);
+            values.dedup();
+            values
+        }
+        "codex.thread.tools.namespaces_total" | "codex.thread.tools.fragment_bytes" => {
+            log_boundaries(15.)
+        }
+        "codex.turn.critical_path.duration_ms" | "codex.turn.critical_path.component_ms" => {
+            let mut values = DURATION_BOUNDARIES.to_vec();
+            values.extend([
+                180000., 300000., 600000., 900000., 1800000., 3600000., 7200000.,
+            ]);
+            values
+        }
+        _ if name.ends_with("_ms") => DURATION_BOUNDARIES.to_vec(),
+        _ => return None,
+    })
+}
+
+fn log_boundaries(exponent: f64) -> Vec<f64> {
+    (0..511)
+        .map(|index| {
+            if index == 0 {
+                0.
+            } else {
+                2_f64.powf(exponent * f64::from(index - 1) / 509.)
+            }
+        })
+        .collect()
 }
 
 #[derive(Debug)]

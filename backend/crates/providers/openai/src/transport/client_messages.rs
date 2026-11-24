@@ -36,6 +36,7 @@ impl CodexBackendClient {
             ACCEPT,
             HeaderValue::from_static("application/json, text/event-stream"),
         );
+        self.scope_device_headers(&mut headers);
         self.append_middleware_headers(&mut headers)?;
         let body = if self.privacy.is_some() {
             let mut value =
@@ -45,6 +46,7 @@ impl CodexBackendClient {
         } else {
             body
         };
+        let body = self.scope_raw_device_body(body);
         let trace = context
             .trace
             .cloned()

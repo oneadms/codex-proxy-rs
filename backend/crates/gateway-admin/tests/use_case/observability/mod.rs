@@ -1414,6 +1414,7 @@ impl SettingsStore for FixtureSettingsStore {
             rotation_strategy: RotationStrategy::Smart,
             updated_at: Utc::now(),
             values: gateway_admin::model::settings::RuntimeSettingsValues {
+                openai_telemetry_enabled: true,
                 codex_privacy_policy: Default::default(),
                 request_location_enabled: false,
                 request_location: Default::default(),

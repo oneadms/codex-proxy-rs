@@ -29,6 +29,7 @@ export function useSettingsForm() {
   const smartSchedulingDefaults = shallowRef<SmartSchedulingConfig>()
   const quotaResetWindowWeightsDefaults = shallowRef<ResetWindowWeights>()
   const form = reactive({
+    openaiTelemetryEnabled: true,
     configRevision: 0,
     smartScheduling: undefined as SmartSchedulingConfig | undefined,
     quotaResetWindowWeights: undefined as ResetWindowWeights | undefined,
@@ -132,6 +133,7 @@ export function useSettingsForm() {
   const maxRetryAfterSecondsValue = numericModel('maxRetryAfterSeconds')
 
   function applySettings(data: Awaited<ReturnType<typeof getSettings>>) {
+    form.openaiTelemetryEnabled = data.openaiTelemetryEnabled
     form.codexPrivacyPolicy = cloneDeep(data.codexPrivacyPolicy)
     form.configRevision = data.configRevision
     form.requestLocationEnabled = data.requestLocationEnabled
@@ -262,6 +264,7 @@ export function useSettingsForm() {
       : savedSettings.form.requestLocation
     await saveAction.run(async () => {
       const result = await updateSettings({
+        openaiTelemetryEnabled: form.openaiTelemetryEnabled,
         configRevision: savedSettings.form.configRevision,
         providerRequestProfiles: requestProfileUpdates(
           savedSettings.form.providerRequestProfiles,

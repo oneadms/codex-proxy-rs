@@ -26,7 +26,7 @@ async fn http_metrics_export_delta_histograms_without_request_content() {
     assert_eq!(api["sum"]["dataPoints"][0]["asInt"], 1);
     let tags = attributes(&api["sum"]["dataPoints"][0]);
     assert_eq!(tags["model"], "gpt-test");
-    assert_eq!(tags["auth_mode"], "chatgpt");
+    assert_eq!(tags["auth_mode"], "Chatgpt");
     assert_eq!(tags["app.version"], "1.2.3");
     assert_eq!(tags["originator"], "codex_cli_rs");
     assert_eq!(tags["status"], "200");

@@ -11,9 +11,15 @@ use wiremock::{
     matchers::{method, path},
 };
 
+mod activity;
 mod analytics;
+mod delivery;
+mod facts;
 mod hosted_tools;
+mod local_tools;
+mod metadata;
 mod metrics;
+mod responses;
 mod session;
 
 fn settings(collector: &MockServer) -> CodexTelemetrySettings {

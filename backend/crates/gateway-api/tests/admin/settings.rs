@@ -40,6 +40,7 @@ async fn response_json(response: axum::response::Response) -> Value {
 fn update_body() -> Value {
     json!({
         "configRevision": 7,
+        "openaiTelemetryEnabled": true,
         "codexPrivacyPolicy": {"enabled":false,"onError":"skip_rule","rules":[]},
         "requestLocationEnabled": false,
         "requestLocation": {"country":"US", "region":"Ohio", "city":"Piketon", "timezone":"America/New_York"},
@@ -77,6 +78,42 @@ fn update_body() -> Value {
         "resetCreditLeadMinutes": 10,
         "resetCreditMaxWeeklyRemainingPercent": null
     })
+}
+
+#[tokio::test]
+async fn openai_telemetry_setting_round_trips_with_revision_checks() {
+    let fixture = AdminTestFixture::new().await;
+    fixture.auth.insert_session("valid-session");
+    let mut body = update_body();
+    for enabled in [false, true] {
+        body["openaiTelemetryEnabled"] = json!(enabled);
+        let response = app(fixture.state())
+            .oneshot(request(
+                Method::POST,
+                "/api/admin/settings/update",
+                Some(body.clone()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let saved = response_json(response).await;
+        assert_eq!(saved["data"]["openaiTelemetryEnabled"], enabled);
+        let response = app(fixture.state())
+            .oneshot(request(Method::GET, "/api/admin/settings", None))
+            .await
+            .unwrap();
+        assert_eq!(response_json(response).await["data"], saved["data"]);
+        let stale = app(fixture.state())
+            .oneshot(request(
+                Method::POST,
+                "/api/admin/settings/update",
+                Some(body.clone()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(stale.status(), StatusCode::CONFLICT);
+        body["configRevision"] = saved["data"]["configRevision"].clone();
+    }
 }
 
 #[tokio::test]

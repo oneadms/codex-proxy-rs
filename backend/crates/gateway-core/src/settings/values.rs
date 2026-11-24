@@ -8,6 +8,7 @@ use crate::identity::ProviderKind;
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SettingsValues {
+    pub(crate) openai_telemetry_enabled: bool,
     #[serde(default)]
     pub(crate) account_error_protection: crate::account::AccountErrorProtection,
     #[serde(skip, default = "initial_protection_revision")]
@@ -43,6 +44,17 @@ fn initial_protection_revision() -> u64 {
 }
 
 impl SettingsValues {
+    #[must_use]
+    pub const fn with_openai_telemetry_enabled(mut self, enabled: bool) -> Self {
+        self.openai_telemetry_enabled = enabled;
+        self
+    }
+
+    #[must_use]
+    pub const fn openai_telemetry_enabled(&self) -> bool {
+        self.openai_telemetry_enabled
+    }
+
     #[must_use]
     pub const fn with_account_error_protection_revision(mut self, revision: u64) -> Self {
         self.account_error_protection_revision = revision;
@@ -192,6 +204,7 @@ impl SettingsValues {
         min_codex_cli_version: Option<String>,
     ) -> Self {
         Self {
+            openai_telemetry_enabled: true,
             account_error_protection: Default::default(),
             account_error_protection_revision: 1,
             request_profiles: Arc::default(),

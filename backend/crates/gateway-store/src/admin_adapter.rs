@@ -93,6 +93,7 @@ impl SettingsStore for AdminSettingsStoreAdapter {
                 MutationAuditOperation::RuntimeSettingsReplace,
                 "1",
                 vec![
+                    "openai_telemetry_enabled".to_owned(),
                     "provider_request_profiles_json".to_owned(),
                     "request_location_enabled".to_owned(),
                     "request_location_json".to_owned(),
