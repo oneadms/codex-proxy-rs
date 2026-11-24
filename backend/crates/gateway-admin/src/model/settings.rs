@@ -70,6 +70,7 @@ pub struct RuntimeSettingsValues {
     pub ops_event_retention_days: u32,
     pub audit_retention_days: u32,
     pub account_error_protection: gateway_core::account::AccountErrorProtection,
+    pub account_connection_test_prompt: String,
     pub account_warmup_enabled: bool,
     pub account_warmup_cron: String,
     pub account_warmup_model: Option<String>,
@@ -191,6 +192,9 @@ impl From<RuntimeSettings> for ReplaceRuntimeSettings {
 impl RuntimeSettingsValues {
     /// 校验共同事实，返回字段名供边界转换错误；SQL 类型转换仍由 Store 处理
     pub fn validate(&self) -> Result<(), &'static str> {
+        if self.account_connection_test_prompt.trim().is_empty() {
+            return Err("account_connection_test_prompt");
+        }
         if !(1..=1440).contains(&self.reset_credit_lead_minutes) {
             return Err("reset_credit_lead_minutes");
         }

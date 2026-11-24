@@ -917,7 +917,8 @@ OpenAI / xAI 导入用例。并发槽位由单个 Worker 统一管理，条目�
 OpenAI Provider 拥有密码与 TOTP 登录、会话清理、Codex 授权及回调校验，Host 通过 Admin 的 JavaScript 端口管理 Node 进程、有界通信和取消回收。
 每次登录使用独立 Camoufox 浏览器，登录接口的原生 fetch 和实时 Sentinel SDK 共用账号绑定的代理与 Cookie；跳转由 Provider 和浏览器逐步校验，loopback 回调只提取授权码。
 Provider 按邮箱读取既有 Linux 设备参数，成功导入时与 OAuth 凭据一并保存，显式更换设备也只在成功后提交；普通令牌刷新保留设备。
-浏览器关闭会释放本次 Cookie 和网页存储，会话列表无法唯一确定本次登录、其他会话未清理完成或上游要求人工验证时终止该条目，不把浏览器会话、密码或 TOTP 密钥写入账号凭据
+浏览器关闭会释放本次 Cookie 和网页存储，会话列表无法唯一确定本次登录、其他会话未清理完成或上游要求人工验证时终止该条目
+协议登录成功后，用户名、密码与 TOTP 密钥随 OAuth 凭据保存，只有显式敏感导出返回明文，网页登录状态不持久化
 
 ### 登录与查询身份
 
@@ -995,6 +996,10 @@ OpenAI 从账号目录生成原生列表；先按冻结政策选择来源，再�
 
 credential 与 quota 是两组独立事实：credential refresh 不等于 quota refresh，额度接口的 401/403
 也不能单独证明 refresh token 永久失效
+
+协议登录账号的认证失败由 Provider 独立后台任务恢复，复用刷新容量租约、账号互斥和凭据 CAS
+恢复沿用账号节点、时区和设备，核对返回用户及工作区后轮换令牌、清除旧 Cookie 并失效目录
+重登失败保留凭据及安全错误，停止自动重放，由管理员重新导入；普通 OAuth 账号继续使用令牌刷新策略
 
 - OpenAI 支持 OAuth、AT/RT、PAT 和上游 API Key。OAuth 身份来自官方 JWT claims，PAT 经官方身份接口验证，
   不信任导入文档顶层身份字段。RT-only 导入先换取 AT；AT-only、PAT 与 API Key 不参加 OAuth 自动续期。
@@ -1314,7 +1319,13 @@ Worker 由各 Bundle 贡献、由 Host 统一监督：
 - Core：`runtime` owner 的 RuntimeSnapshot 周期对账和 Redis change 订阅
 - Admin：S3/R2 备份 daemon，负责调度、执行、删除收敛与保留清理；
   以及账号错误保护恢复 worker（到期解除或探测恢复）、重置卡自动使用、公共 CPR 互联同步和 Mihomo 本地运行时对账
-- Provider：credential refresh、quota/catalog 健康、账号预热和官方版本/etag 检查
+- Provider：credential refresh、quota/catalog 健康、账号预热、官方版本/etag 检查和 Codex 遥测导出
+
+Codex 传输指标由 OpenAI Provider 在真实收发边界采样，按账号出口与客户端画像聚合。
+同一 daemon 发送 Responses 托管工具的 analytics 事件，使用所选 OAuth 账号认证与代理，
+只保留经过账号隔离和隐私处理的会话身份及摘要，事件队列有界且不重试结果不明的 POST。
+Provider 贡献导出 daemon，Host 监督运行与关闭；关闭前在期限内尝试导出未发送样本，失败不改变请求结果。
+官方出口、过滤与配置见[部署文档](../deploy/README.md#codex-传输遥测)，不与 Store 的请求观测和账单队列合并
 
 OpenAI 客户端画像由 Provider 每小时检查发布元数据，发布标识变化后才提取对应制品版本并发布画像。
 同版本的有效制品缓存每 24 小时续期，保留 30 天；续期保留原核验时间，失败不推进成功写入游标。

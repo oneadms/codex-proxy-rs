@@ -61,6 +61,7 @@ pub struct RuntimeSettingsFields {
     pub ops_event_retention_days: u64,
     pub audit_retention_days: u64,
     pub account_error_protection: gateway_core::account::AccountErrorProtection,
+    pub account_connection_test_prompt: String,
     pub account_warmup_enabled: bool,
     pub account_warmup_cron: String,
     pub account_warmup_model: Option<String>,
@@ -779,6 +780,7 @@ impl RuntimeSettingsFields {
             audit_retention_days: u32::try_from(self.audit_retention_days)
                 .map_err(|_| WireValidationError::new("settingsAuditRetentionOverflow"))?,
             account_error_protection: self.account_error_protection,
+            account_connection_test_prompt: self.account_connection_test_prompt,
             account_warmup_enabled: self.account_warmup_enabled,
             account_warmup_cron: self.account_warmup_cron,
             account_warmup_model: self.account_warmup_model,
@@ -820,6 +822,7 @@ impl From<gateway_admin::model::settings::RuntimeSettingsValues> for RuntimeSett
             ops_event_retention_days: u64::from(settings.ops_event_retention_days),
             audit_retention_days: u64::from(settings.audit_retention_days),
             account_error_protection: settings.account_error_protection,
+            account_connection_test_prompt: settings.account_connection_test_prompt,
             account_warmup_enabled: settings.account_warmup_enabled,
             account_warmup_cron: settings.account_warmup_cron,
             account_warmup_model: settings.account_warmup_model,
@@ -834,6 +837,7 @@ impl From<gateway_admin::model::settings::RuntimeSettingsValues> for RuntimeSett
 fn settings_validation_error(field: &'static str) -> WireValidationError {
     WireValidationError::new(match field {
         "account_error_protection" => "accountErrorProtection",
+        "account_connection_test_prompt" => "accountConnectionTestPrompt",
         "account_warmup_enabled" => "accountWarmupEnabled",
         "account_warmup_model" => "accountWarmupModel",
         "reset_credit_lead_minutes" => "resetCreditLeadMinutes",

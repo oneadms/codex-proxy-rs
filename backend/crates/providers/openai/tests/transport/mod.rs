@@ -66,6 +66,7 @@ mod proxy_capacity;
 mod request;
 mod reset_credits;
 mod subscription;
+mod telemetry;
 mod tls;
 mod usage;
 mod websocket;

@@ -9,6 +9,7 @@ use crate::transport::protocol::responses::{
 /// WebSocket opening 描述
 #[derive(Clone)]
 pub struct CodexWebSocketConnection {
+    pub(crate) telemetry: Option<crate::transport::telemetry::SessionTelemetry>,
     pub(crate) connection_budget: Option<gateway_core::engine::connection::ConnectionBudget>,
     pub(crate) outbound_proxy: Option<gateway_core::account::OutboundProxy>,
     pub(super) endpoint: String,
@@ -27,7 +28,7 @@ impl fmt::Debug for CodexWebSocketConnection {
     }
 }
 
-// 请求预算和代理额度不是连接身份，额度调整不能改变已有连接的复用合同
+// 请求预算、代理额度和遥测不属于连接身份，不能改变已有连接的复用合同
 impl PartialEq for CodexWebSocketConnection {
     fn eq(&self, other: &Self) -> bool {
         self.endpoint == other.endpoint
@@ -178,6 +179,7 @@ impl CodexWebSocketConnection {
             permessage_deflate: true,
             outbound_proxy: None,
             connection_budget: None,
+            telemetry: None,
         }
     }
 

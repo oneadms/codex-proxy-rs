@@ -53,6 +53,7 @@ pub(crate) async fn connect_live_sideband(
         permessage_deflate: true,
         outbound_proxy,
         connection_budget: None,
+        telemetry: None,
     };
     let (stream, response) = connect_sideband_websocket(&connection).await?;
     let subprotocol = response

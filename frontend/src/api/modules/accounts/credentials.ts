@@ -93,7 +93,14 @@ interface AccountExportParam {
 interface AccountExportResponse {
   exportedAt: string
   fileName: string
-  documents: unknown[]
+  documents: {
+    provider: string
+    document: {
+      accounts: {
+        protocolLogin?: { username: string, password: string, totpSecret: string }
+      }[]
+    }
+  }[]
 }
 
 interface AccountImportTaskListResponse {

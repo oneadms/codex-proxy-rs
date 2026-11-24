@@ -1131,6 +1131,7 @@ impl AccountStore for FakeAccountStore {
 
 #[derive(Default)]
 struct StaticSettingsStore {
+    account_connection_test_prompt: Option<String>,
     reset_credit_on_low_weekly_quota: bool,
     reset_credit_max_weekly_remaining_percent: Option<u32>,
 }
@@ -1187,6 +1188,10 @@ impl SettingsStore for StaticSettingsStore {
                 ops_event_retention_days: 30,
                 audit_retention_days: 30,
                 account_error_protection: gateway_core::account::AccountErrorProtection::default(),
+                account_connection_test_prompt: self
+                    .account_connection_test_prompt
+                    .clone()
+                    .unwrap_or_else(|| "Reply with exactly OK.".to_owned()),
                 account_warmup_enabled: false,
                 account_warmup_cron: "0 8 * * *".to_owned(),
                 account_warmup_model: None,
@@ -1329,7 +1334,7 @@ fn provider_registry_should_reject_duplicate_kind() {
 }
 
 #[tokio::test]
-async fn connection_test_should_send_the_requested_prompt_or_default() {
+async fn connection_test_should_send_the_requested_prompt_or_global_default() {
     struct EchoPromptProbe;
 
     impl AccountProbe for EchoPromptProbe {
@@ -1354,10 +1359,24 @@ async fn connection_test_should_send_the_requested_prompt_or_default() {
 
     let provider = FakeProviderAdmin::new("xai", events());
     let store = FakeAccountStore::new("xai", events());
-    let services = accounts_service_with_probe(provider, store, Arc::new(EchoPromptProbe)).await;
+    let global_prompt = "  全局测试提示词\n请回复 OK  ";
+    let services = super::AdminHarness::new()
+        .accounts(store)
+        .settings(Arc::new(StaticSettingsStore {
+            account_connection_test_prompt: Some(global_prompt.to_owned()),
+            ..Default::default()
+        }))
+        .provider(provider)
+        .probe(Arc::new(EchoPromptProbe))
+        .build()
+        .await;
     let custom = "  请回复 OK\n保留换行  ";
 
-    for (prompt, expected) in [(Some(custom), custom), (None, "Reply with exactly OK.")] {
+    for (prompt, expected) in [
+        (None, global_prompt),
+        (Some(custom), custom),
+        (None, global_prompt),
+    ] {
         let events = services
             .accounts()
             .test_connection(

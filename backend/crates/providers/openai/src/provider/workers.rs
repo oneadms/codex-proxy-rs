@@ -23,6 +23,7 @@ pub(super) const MODEL_CATALOG_WORKER_OWNER: &str = "openai-model-catalog";
 pub(super) const WARMUP_WORKER_OWNER: &str = "openai-account-warmup";
 pub(super) const WARMUP_CHECK_INTERVAL: Duration = Duration::from_secs(30);
 
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn worker_contributions(
     timezone: gateway_core::time::DeploymentTimeZone,
     refresh: Arc<CodexCredentialRefreshService>,
@@ -30,6 +31,7 @@ pub(crate) fn worker_contributions(
     catalog: Arc<CodexCredentialCatalogService>,
     quota_refresh_policy: CodexQuotaRefreshPolicy,
     oauth_refresh_enabled: bool,
+    protocol_login: Arc<crate::credential::CodexProtocolLoginRecovery>,
     releases: ClientReleaseServices,
 ) -> Result<Vec<WorkerContribution>, WorkerDefinitionError> {
     let refresh_id = WorkerId::try_new(WorkerKind::OAuthRefresh, PROVIDER_NAME)?;
@@ -53,6 +55,14 @@ pub(crate) fn worker_contributions(
         )?));
     }
     contributions.extend([
+        WorkerContribution::Registration(scheduled_registration(
+            WorkerId::try_new(WorkerKind::OAuthRefresh, "openai-protocol-login")?,
+            OAUTH_REFRESH_INTERVAL,
+            Box::new(OpenAiProtocolLoginTask {
+                service: protocol_login,
+                catalog: Arc::clone(&catalog),
+            }),
+        )?),
         WorkerContribution::Registration(scheduled_registration(
             WorkerId::try_new(
                 WorkerKind::QuotaCatalogHealth,
@@ -137,6 +147,33 @@ pub(super) fn scheduled_registration(
 pub(super) struct OpenAiOAuthRefreshTask {
     catalog: Arc<CodexCredentialCatalogService>,
     service: Arc<CodexCredentialRefreshService>,
+}
+
+struct OpenAiProtocolLoginTask {
+    service: Arc<crate::credential::CodexProtocolLoginRecovery>,
+    catalog: Arc<CodexCredentialCatalogService>,
+}
+
+impl ScheduledTask for OpenAiProtocolLoginTask {
+    fn run_cycle(&self, context: WorkerCycleContext) -> BoxFuture<'_, Result<(), WorkerTaskError>> {
+        Box::pin(async move {
+            let changed = tokio::select! {
+                () = context.cancellation().cancelled() => return Ok(()),
+                result = self.service.recover_due() => result.map_err(|error| {
+                    WorkerTaskError::safe("OpenAI 自动协议重登失败").with_source(error)
+                })?,
+            };
+            if !changed.is_empty() {
+                self.catalog
+                    .invalidate_accounts(&changed)
+                    .await
+                    .map_err(|error| {
+                        WorkerTaskError::safe("OpenAI 重登后目录失效失败").with_source(error)
+                    })?;
+            }
+            Ok(())
+        })
+    }
 }
 
 impl ScheduledTask for OpenAiOAuthRefreshTask {

@@ -11,13 +11,27 @@ use super::CodexWebSocketExchangeError;
 pub(super) async fn next_websocket_message(
     websocket: &mut PumpedWebSocket,
     receive_timeout: Duration,
+    telemetry: Option<&crate::transport::telemetry::SessionTelemetry>,
 ) -> Result<Option<Message>, CodexWebSocketExchangeError> {
-    match timeout(receive_timeout, websocket.next()).await {
+    let started = std::time::Instant::now();
+    let result = match timeout(receive_timeout, websocket.next()).await {
         Ok(message) => message.transpose().map_err(Into::into),
         Err(_) => Err(CodexWebSocketExchangeError::ReceiveIdleTimeout {
             timeout: receive_timeout,
         }),
+    };
+    if let Some(telemetry) = telemetry {
+        match &result {
+            Ok(Some(Message::Text(text))) => {
+                telemetry.websocket_event(text.as_bytes(), started.elapsed())
+            }
+            Err(_) | Ok(None | Some(Message::Close(_))) => {
+                telemetry.websocket_failure(started.elapsed())
+            }
+            Ok(_) => {}
+        }
     }
+    result
 }
 
 pub(super) fn reused_stream_receive_error(

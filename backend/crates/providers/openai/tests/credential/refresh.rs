@@ -543,73 +543,113 @@ async fn scheduled_refresh_persists_the_original_upstream_error_message() {
 }
 
 #[tokio::test]
-async fn scheduled_refresh_persists_retryable_message_inside_the_two_hour_window() {
-    let store = Arc::new(MemoryAccountStore::default());
-    let policy = MutableRuntimePolicy::new(Duration::from_secs(5 * 60));
-    let upstream_message = "Invalid refresh token.";
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/oauth/token"))
-        .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
-            "error": {
-                "message": upstream_message,
-                "type": "invalid_request_error",
-                "code": "invalid_refresh_token"
+async fn scheduled_refresh_routes_401_to_protocol_login_or_bounded_token_recovery() {
+    for protocol_login in [false, true] {
+        let store = Arc::new(MemoryAccountStore::default());
+        let policy = MutableRuntimePolicy::new(Duration::from_secs(5 * 60));
+        let upstream_message = "Invalid refresh token.";
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+                "error": {
+                    "message": upstream_message,
+                    "type": "invalid_request_error",
+                    "code": "invalid_refresh_token"
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let service = CodexCredentialRefreshService::new(
+            store.repository(),
+            Arc::new(OpenAiTokenClient::new(
+                reqwest::Client::builder()
+                    .no_proxy()
+                    .build()
+                    .expect("test HTTP client"),
+                TokenClientConfig {
+                    client_id: "test-public-client".to_owned(),
+                    token_endpoint: format!("{}/oauth/token", server.uri()),
+                },
+                provider_openai::transport::profile::CodexWireProfileState::new(Default::default()),
+            )),
+            Arc::new(RefreshLeases),
+            Arc::new(RefreshCredentialState),
+            policy,
+            Arc::new(crate::RecordingDiagnostics::default()),
+        );
+        let account_id = "acct_retryable_unauthorized";
+        let expires_at = SystemTime::now()
+            .checked_sub(Duration::from_secs(30 * 60))
+            .expect("expired access token");
+        let mut verified_account = profile("chatgpt-acct_retryable_unauthorized");
+        verified_account.access_token_expires_at = Some(DateTime::<Utc>::from(expires_at));
+        let mut prepared = provider_openai::credential::CodexCredentialAdmin
+            .prepare_import(ImportCodexOAuthCredential {
+                account_id: account_id.to_owned(),
+                name: account_id.to_owned(),
+                secret: secret("synthetic-expired"),
+                verified_account,
+                next_refresh_at: None,
+                enabled: true,
+            })
+            .unwrap();
+        if protocol_login {
+            let mut data = CodexCredentialCodec::decode_complete(&prepared.credential).unwrap();
+            data.oauth_mut().unwrap().protocol_login = Some(Box::new(
+                provider_openai::credential::CodexProtocolLoginCredentials {
+                    username: "fixture@example.invalid".to_owned(),
+                    password: "synthetic-password".to_owned(),
+                    totp_secret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ".to_owned(),
+                },
+            ));
+            prepared.credential = CodexCredentialCodec::encode_complete(data).unwrap();
+        }
+        store.create_account(prepared).await.unwrap();
+
+        let outcomes = service.refresh_due().await.expect("refresh cycle");
+
+        let expected = if protocol_login {
+            CodexCredentialRefreshOutcome::Invalidated {
+                account_id: account_id.to_owned(),
             }
-        })))
-        .expect(1)
-        .mount(&server)
-        .await;
-    let service = CodexCredentialRefreshService::new(
-        store.repository(),
-        Arc::new(OpenAiTokenClient::new(
-            reqwest::Client::builder()
-                .no_proxy()
-                .build()
-                .expect("test HTTP client"),
-            TokenClientConfig {
-                client_id: "test-public-client".to_owned(),
-                token_endpoint: format!("{}/oauth/token", server.uri()),
-            },
-            provider_openai::transport::profile::CodexWireProfileState::new(Default::default()),
-        )),
-        Arc::new(RefreshLeases),
-        Arc::new(RefreshCredentialState),
-        policy,
-        Arc::new(crate::RecordingDiagnostics::default()),
-    );
-    let account_id = "acct_retryable_unauthorized";
-    let expires_at = SystemTime::now()
-        .checked_sub(Duration::from_secs(30 * 60))
-        .expect("expired access token");
-    seed_refreshable_account(&store, account_id, expires_at, None).await;
-
-    let outcomes = service.refresh_due().await.expect("refresh cycle");
-
-    assert!(matches!(
-        outcomes.as_slice(),
-        [CodexCredentialRefreshOutcome::Transient {
-            account_id: deferred_account_id,
-        }] if deferred_account_id == account_id
-    ));
-    let account = store.account(account_id).expect("deferred account");
-    assert_eq!(account.credential_state(), CredentialState::Ready);
-    assert_eq!(
-        account.last_error_reason(),
-        Some(AccountErrorReason::AccessTokenExpired)
-    );
-    assert_eq!(account.last_error_message(), Some(upstream_message));
-    let retry_at = account.next_refresh_at().expect("next refresh attempt");
-    assert!(retry_at > SystemTime::now());
-    assert!(
-        retry_at
-            <= expires_at
-                .checked_add(Duration::from_secs(2 * 60 * 60))
-                .expect("recovery deadline")
-    );
-    let projection = account.status_projection(SystemTime::now(), None);
-    assert_eq!(projection.status, AccountStatus::Error);
-    assert_eq!(projection.error_message.as_deref(), Some(upstream_message));
+        } else {
+            CodexCredentialRefreshOutcome::Transient {
+                account_id: account_id.to_owned(),
+            }
+        };
+        assert_eq!(outcomes, vec![expected]);
+        let account = store.account(account_id).expect("deferred account");
+        assert_eq!(
+            account.credential_state(),
+            if protocol_login {
+                CredentialState::Expired
+            } else {
+                CredentialState::Ready
+            }
+        );
+        assert_eq!(
+            account.last_error_reason(),
+            Some(AccountErrorReason::AccessTokenExpired)
+        );
+        assert_eq!(account.last_error_message(), Some(upstream_message));
+        if !protocol_login {
+            let retry_at = account.next_refresh_at().expect("next refresh attempt");
+            assert!(retry_at > SystemTime::now());
+            assert!(
+                retry_at
+                    <= expires_at
+                        .checked_add(Duration::from_secs(2 * 60 * 60))
+                        .expect("recovery deadline")
+            );
+        } else {
+            assert!(account.next_refresh_at().is_none());
+        }
+        let projection = account.status_projection(SystemTime::now(), None);
+        assert_eq!(projection.status, AccountStatus::Error);
+        assert_eq!(projection.error_message.as_deref(), Some(upstream_message));
+    }
 }
 
 #[tokio::test]

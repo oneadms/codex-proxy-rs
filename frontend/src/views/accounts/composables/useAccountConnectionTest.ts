@@ -3,12 +3,11 @@ import { CheckCircle2, Clock3, Wifi, XCircle } from '@lucide/vue'
 
 import { clamp } from 'es-toolkit'
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
-import { getAccountModels, refreshAccountModels, testAccountConnection } from '@/api'
+import { getAccountModels, getSettings, refreshAccountModels, testAccountConnection } from '@/api'
 import { ApiError } from '@/api/request'
 import { useIdSet } from '@/composables/useIdSet'
 import { useRequestState } from '@/composables/useRequestState'
 import { t } from '@/i18n'
-import { useUiStore } from '@/stores/modules/ui'
 import { notification as ZNotification } from '@/utils/notification'
 import { errorMessage } from '@/utils/operation'
 
@@ -170,7 +169,6 @@ function connectionTestFailureDiagnostics(event: ConnectionTestFailureEvent) {
 }
 
 export function useAccountConnectionTest(options: { reload: () => Promise<unknown> }) {
-  const ui = useUiStore()
   const showConnectionTestModal = shallowRef(false)
   const testingAccount = shallowRef<Account | null>(null)
   const connectionTestStatus = shallowRef<ConnectionTestStatus>('idle')
@@ -183,15 +181,13 @@ export function useAccountConnectionTest(options: { reload: () => Promise<unknow
   const connectionTestDurationMs = shallowRef<number | null>(null)
   const testingConnections = useIdSet<string>()
   const modelsRequest = useRequestState()
+  const promptRequest = useRequestState()
   const modelsRequestMode = shallowRef<'load' | 'refresh'>('load')
   const loadingConnectionTestModels = computed(() => modelsRequest.loading.value && modelsRequestMode.value === 'load')
   const refreshingConnectionTestModels = computed(() => modelsRequest.loading.value && modelsRequestMode.value === 'refresh')
   const connectionTestSelectedModel = shallowRef('')
   const connectionTestModelOptions = ref<ConnectionTestModelOption[]>([])
   const connectionTestPrompt = shallowRef('')
-  const canSaveDefaultPrompt = computed(() =>
-    Boolean(connectionTestPrompt.value.trim()) && connectionTestPrompt.value !== ui.accountConnectionTestPrompt,
-  )
 
   let connectionTestStartedAtMs = 0
   let connectionTestRun: ConnectionTestRun | undefined
@@ -238,19 +234,27 @@ export function useAccountConnectionTest(options: { reload: () => Promise<unknow
     testingAccount.value = account
     connectionTestSelectedModel.value = ''
     connectionTestModelOptions.value = []
-    connectionTestPrompt.value = ui.accountConnectionTestPrompt
+    connectionTestPrompt.value = ''
     showConnectionTestModal.value = true
     resetConnectionTest()
     void loadConnectionTestModels(account)
+    void loadConnectionTestPrompt()
   }
 
-  function saveDefaultPrompt() {
-    if (!canSaveDefaultPrompt.value)
-      return
-    ui.accountConnectionTestPrompt = connectionTestPrompt.value
-    ZNotification.success({
-      message: t('accounts.connectionTest.defaultPromptSaved'),
-    })
+  async function loadConnectionTestPrompt() {
+    const requestId = promptRequest.start()
+    try {
+      const settings = await getSettings({ signal: promptRequest.signal })
+      if (promptRequest.isCurrent(requestId))
+        connectionTestPrompt.value = settings.accountConnectionTestPrompt
+    }
+    catch (error: unknown) {
+      if (promptRequest.isCurrent(requestId))
+        connectionTestError.value = errorMessage(error)
+    }
+    finally {
+      promptRequest.finish(requestId)
+    }
   }
 
   function resetConnectionTest() {
@@ -532,6 +536,7 @@ export function useAccountConnectionTest(options: { reload: () => Promise<unknow
     () => testingAccount.value?.id,
   ], ([open]) => {
     modelsRequest.invalidate({ resetLoading: open })
+    promptRequest.invalidate({ resetLoading: open })
     if (!open) {
       clearConnectionTestRun()
     }
@@ -556,8 +561,7 @@ export function useAccountConnectionTest(options: { reload: () => Promise<unknow
     connectionTestModelOptions,
     connectionTestPrompt,
     connectionTestStatusView,
-    canSaveDefaultPrompt,
-    saveDefaultPrompt,
+    loadingConnectionTestPrompt: promptRequest.loading,
     openConnectionTest,
     handleRefreshConnectionTestModels,
     handleTestConnection,

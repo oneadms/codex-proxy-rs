@@ -28,6 +28,7 @@ pub(crate) use affinity::{
 };
 pub(crate) use eligibility::CodexSelectionModel;
 pub(crate) use oauth::oauth_owner_ref;
+pub(crate) use protocol_login::CodexProtocolLoginRecovery;
 pub(crate) use protocol_login::prepare_protocol_login;
 pub(crate) use types::parse_access_token_expiration;
 
@@ -81,7 +82,7 @@ pub(crate) use types::oauth_identity_key;
 pub use types::{
     CODEX_AUTHENTICATION_KIND_OAUTH, CodexAccountProfile, CodexCookie, CodexCookieCaptureOutcome,
     CodexCredentialData, CodexCredentialPrincipal, CodexOAuthCredentialData, CodexOAuthSecret,
-    ResponsesTransport, RuntimeCodexCookie, UpsertCodexCookie,
+    CodexProtocolLoginCredentials, ResponsesTransport, RuntimeCodexCookie, UpsertCodexCookie,
 };
 
 mod diagnostics;

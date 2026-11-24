@@ -90,6 +90,13 @@ openai:
   residency: us
   # 账号路由参考值：us、us_cr
   account_routing_override: null
+  # Codex 遥测；指标在发行构建默认发往 Statsig，analytics 使用所选 OAuth 账号的 Codex 出口
+  # telemetry:
+  #   enabled: true
+  #   analytics_enabled: true
+  #   environment: dev
+  #   metrics_exporter:
+  #     type: statsig # none 仅关闭指标；otlp-http 使用自定义 OTLP HTTP JSON 收集器
   # 可选：完整的 Responses 上游 WS 池配置；省略整段使用以下默认值。
   # ws_pool:
   #   enabled: true

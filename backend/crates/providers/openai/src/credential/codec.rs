@@ -142,6 +142,7 @@ impl CodexCredentialCodec {
             principal,
             installation_id,
             protocol_login_device: None,
+            protocol_login: None,
             access_token: secret.access_token.expose_secret().to_owned(),
             refresh_token: secret
                 .refresh_token
@@ -266,6 +267,9 @@ impl CodexCredentialCodec {
                 incoming.transport = existing.transport;
                 if incoming.protocol_login_device.is_none() {
                     incoming.protocol_login_device = existing.protocol_login_device;
+                }
+                if incoming.protocol_login.is_none() {
+                    incoming.protocol_login = existing.protocol_login;
                 }
             }
             (CodexCredentialData::ApiKey(incoming), CodexCredentialData::ApiKey(existing)) => {

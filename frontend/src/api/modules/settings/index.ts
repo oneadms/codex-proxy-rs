@@ -74,6 +74,7 @@ export interface RuntimeSettings {
   opsEventRetentionDays: number
   auditRetentionDays: number
   accountErrorProtection: AccountErrorProtection
+  accountConnectionTestPrompt: string
   accountWarmupEnabled: boolean
   accountWarmupCron: string
   accountWarmupModel: string | null

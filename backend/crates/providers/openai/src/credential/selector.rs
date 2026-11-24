@@ -1821,6 +1821,30 @@ impl CodexCredentialSelector {
         let message = message.filter(|value| !value.trim().is_empty());
         match failure {
             CodexAccountFailure::CredentialExpired => {
+                if account.authentication_kind() == CODEX_AUTHENTICATION_KIND_OAUTH {
+                    let loaded = self
+                        .repository
+                        .store()
+                        .load_credential(account.id(), account.revision())
+                        .await
+                        .map_err(CredentialRepositoryError::from)?;
+                    let data = super::CodexCredentialCodec::decode_complete(&loaded.credential)
+                        .map_err(CredentialRepositoryError::from)?;
+                    if data
+                        .oauth()
+                        .is_some_and(|oauth| oauth.protocol_login.is_some())
+                    {
+                        return self
+                            .apply_credential_state(
+                                account,
+                                CredentialState::Expired,
+                                AccountErrorReason::AccessTokenExpired,
+                                now,
+                                message,
+                            )
+                            .await;
+                    }
+                }
                 if account.authentication_kind() == CODEX_AUTHENTICATION_KIND_OAUTH
                     && account.has_refresh_token()
                     && account

@@ -2,6 +2,7 @@
 
 mod peer_info;
 mod protocol_login;
+mod telemetry;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroU32;
@@ -249,7 +250,13 @@ async fn openai_bundle_exposes_one_core_provider_and_drains_worker_contributions
     assert_eq!(bundle.core_provider().name(), "openai");
     assert_eq!(bundle.admin_provider().provider_kind().as_str(), "openai");
     let contributions = bundle.take_worker_contributions();
-    assert_eq!(contributions.len(), 8);
+    assert_eq!(contributions.len(), 10);
+    assert!(contributions.iter().any(|contribution| {
+        matches!(contribution, WorkerContribution::Registration(registration)
+            if registration.id.owner() == "openai-telemetry"
+                && registration.id.kind() == WorkerKind::OpsFlush
+                && matches!(&registration.runnable, WorkerRunnable::Daemon { .. }))
+    }));
     assert!(
         contributions
             .iter()

@@ -9,6 +9,87 @@ use std::sync::{Arc, Mutex};
 use url::Url;
 
 #[derive(Default)]
+pub(super) struct RecoveryLeases {
+    pub(super) busy: bool,
+    pub(super) held: Arc<std::sync::atomic::AtomicBool>,
+}
+
+struct RecoveryGuard(Arc<std::sync::atomic::AtomicBool>);
+
+impl Drop for RecoveryGuard {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl gateway_core::provider_ports::ProviderLeaseGuard for RecoveryGuard {
+    fn release(
+        self: Box<Self>,
+    ) -> futures::future::BoxFuture<
+        'static,
+        Result<(), gateway_core::provider_ports::ProviderStoreError>,
+    > {
+        Box::pin(async move {
+            drop(self);
+            Ok(())
+        })
+    }
+}
+
+impl gateway_core::provider_ports::ProviderLeasePort for RecoveryLeases {
+    fn load_state<'a>(
+        &'a self,
+        _: &'a gateway_core::policy::ClientApiKeyId,
+        _: &'a gateway_core::routing::ProviderKind,
+        _: &'a [gateway_core::account::ProviderAccountId],
+        _: gateway_core::provider_ports::ProviderConcurrencyPool,
+    ) -> futures::future::BoxFuture<
+        'a,
+        Result<
+            gateway_core::provider_ports::ProviderSchedulingState,
+            gateway_core::provider_ports::ProviderStoreError,
+        >,
+    > {
+        Box::pin(async { panic!("protocol recovery does not schedule model requests") })
+    }
+
+    fn try_acquire(
+        &self,
+        request: gateway_core::provider_ports::ProviderLeaseRequest,
+    ) -> futures::future::BoxFuture<
+        '_,
+        Result<
+            gateway_core::provider_ports::ProviderLeaseAcquisition,
+            gateway_core::provider_ports::ProviderStoreError,
+        >,
+    > {
+        use gateway_core::provider_ports::{ProviderLeaseAcquisition, ProviderLeaseRequest};
+        Box::pin(async move {
+            if self.busy {
+                return Ok(ProviderLeaseAcquisition::Busy { retry_after: None });
+            }
+            match request {
+                ProviderLeaseRequest::RefreshCapacity(_) => {
+                    Ok(ProviderLeaseAcquisition::Acquired(Box::new(())))
+                }
+                ProviderLeaseRequest::Refresh(_) => {
+                    if self.held.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                        Ok(ProviderLeaseAcquisition::Busy { retry_after: None })
+                    } else {
+                        Ok(ProviderLeaseAcquisition::Acquired(Box::new(RecoveryGuard(
+                            self.held.clone(),
+                        ))))
+                    }
+                }
+                ProviderLeaseRequest::Scheduling(_) => {
+                    panic!("protocol recovery must use refresh leases")
+                }
+            }
+        })
+    }
+}
+
+#[derive(Default)]
 pub(super) struct FixtureBrowser {
     pub(super) devices: Arc<Mutex<Vec<Value>>>,
     pub(super) closed: Arc<Mutex<usize>>,

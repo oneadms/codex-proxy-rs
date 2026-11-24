@@ -337,6 +337,21 @@ impl ResponsesTransport {
 
 pub const CODEX_AUTHENTICATION_KIND_OAUTH: &str = "oauth";
 
+/// 协议重登与敏感导出使用的登录材料，普通调试输出不显示内容
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodexProtocolLoginCredentials {
+    pub username: String,
+    pub password: String,
+    pub totp_secret: String,
+}
+
+impl fmt::Debug for CodexProtocolLoginCredentials {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("CodexProtocolLoginCredentials(<redacted>)")
+    }
+}
+
 /// Codex OAuth 对 `provider_credentials_json` 的完整明文 schema
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -353,6 +368,8 @@ pub struct CodexOAuthCredentialData {
     pub installation_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub protocol_login_device: Option<Box<serde_json::Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol_login: Option<Box<CodexProtocolLoginCredentials>>,
     pub access_token: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refresh_token: Option<String>,
@@ -381,6 +398,7 @@ impl fmt::Debug for CodexOAuthCredentialData {
                     .map(|_| "<pseudonymous>"),
             )
             .field("access_token", &"<redacted>")
+            .field("protocol_login", &self.protocol_login)
             .field(
                 "refresh_token",
                 &self.refresh_token.as_ref().map(|_| "<redacted>"),

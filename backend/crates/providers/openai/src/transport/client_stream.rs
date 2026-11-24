@@ -8,7 +8,7 @@ use futures::{StreamExt, TryStreamExt};
 use gateway_protocol::openai::{
     X_OPENAI_MEMGEN_REQUEST_HEADER,
     events::{self, retry_after_seconds_from_body},
-    sse::{SseEventDecoder, SseFrame},
+    sse::{SseEventDecoder, SseFrame, sse_frame_is_done},
 };
 use reqwest::{
     Response as ReqwestResponse,
@@ -41,6 +41,7 @@ use crate::transport::{
 };
 
 use super::client::*;
+use super::telemetry::SessionTelemetry;
 
 impl CodexBackendClient {
     /// 发送 Responses SSE 请求并返回 live SSE 流（HTTP SSE fallback）
@@ -127,9 +128,26 @@ impl CodexBackendClient {
                 .unwrap_or_default(),
         );
         let client = self.http_opening_client()?;
+        let telemetry = upstream_body
+            .as_object()
+            .and_then(|body| self.response_telemetry(body, outbound.headers(), &profile, context));
         let headers_started_at = Instant::now();
-        let response = client.execute(outbound).await?;
-        let upstream_headers_ms = elapsed_duration_millis(headers_started_at.elapsed());
+        let response = client.execute(outbound).await;
+        let headers_elapsed = headers_started_at.elapsed();
+        if let Some(telemetry) = &telemetry {
+            telemetry.api_request(
+                headers_elapsed,
+                response
+                    .as_ref()
+                    .ok()
+                    .map(|response| response.status().as_u16()),
+                response
+                    .as_ref()
+                    .is_ok_and(|response| response.status().is_success()),
+            );
+        }
+        let response = response?;
+        let upstream_headers_ms = elapsed_duration_millis(headers_elapsed);
         let http_version = http_version_name(response.version()).to_string();
         let status = response.status();
         trace.headers(
@@ -200,7 +218,7 @@ impl CodexBackendClient {
         let rate_limit_updates = Arc::new(tokio::sync::Mutex::new(Vec::new()));
         Ok(CodexBackendStreamingResponse {
             routing_affinity: None,
-            body: http_sse_stream(response, Arc::clone(&rate_limit_updates), trace),
+            body: http_sse_stream(response, Arc::clone(&rate_limit_updates), trace, telemetry),
             transport: CodexBackendTransport::HttpSse,
             websocket_connection_id: None,
             turn_state,
@@ -307,8 +325,10 @@ impl CodexBackendClient {
         .map_err(CodexClientError::WebSocketEncode)?;
         websocket_create.connection.outbound_proxy = self.outbound_proxy.clone();
         websocket_create.connection.connection_budget = self.connection_budget.clone();
-        let (websocket_create, outbound_profile) =
+        let (mut websocket_create, outbound_profile) =
             self.prepare_websocket_request(websocket_create).await?;
+        websocket_create.connection.telemetry =
+            self.response_telemetry(websocket_request.body(), &headers, &profile, context);
         context.trace.cloned().unwrap_or_default().headers(
             "upstream.request.headers",
             serde_json::json!({"transport": "websocket", "phase": "prepared_opening"}),
@@ -742,6 +762,7 @@ fn http_sse_stream(
     response: ReqwestResponse,
     rate_limit_updates: CodexRateLimitUpdates,
     trace: TraceContext,
+    telemetry: Option<SessionTelemetry>,
 ) -> CodexBackendSseStream {
     let stream: CodexBackendSseStream =
         Box::pin(response.bytes_stream().map_err(CodexClientError::Http));
@@ -773,31 +794,88 @@ fn http_sse_stream(
         }
         capture.finish();
     });
-    observe_http_sse_rate_limits(stream, rate_limit_updates)
+    observe_http_sse_rate_limits(stream, rate_limit_updates, telemetry)
 }
 
 fn observe_http_sse_rate_limits(
     stream: CodexBackendSseStream,
     updates: CodexRateLimitUpdates,
+    telemetry: Option<SessionTelemetry>,
 ) -> CodexBackendSseStream {
     Box::pin(futures::stream::unfold(
-        (stream, SseEventDecoder::default(), updates),
-        |(mut stream, mut decoder, updates)| async move {
-            match stream.next().await {
+        (
+            stream,
+            SseEventDecoder::default(),
+            updates,
+            telemetry,
+            std::time::Duration::ZERO,
+        ),
+        |(mut stream, mut decoder, updates, telemetry, mut waiting)| async move {
+            let started = Instant::now();
+            let chunk = stream.next().await;
+            waiting = waiting.saturating_add(started.elapsed());
+            match chunk {
                 Some(chunk) => {
                     if let Ok(bytes) = &chunk {
-                        append_http_sse_rate_limit_updates(decoder.push_frames(bytes), &updates)
-                            .await;
+                        let frames = decoder.push_frames(bytes);
+                        observe_sse_telemetry(&frames, telemetry.as_ref(), &mut waiting);
+                        append_http_sse_rate_limit_updates(frames, &updates).await;
+                    } else if let Some(telemetry) = &telemetry {
+                        telemetry.sse_failure(waiting);
+                        waiting = std::time::Duration::ZERO;
                     }
-                    Some((chunk, (stream, decoder, updates)))
+                    Some((chunk, (stream, decoder, updates, telemetry, waiting)))
                 }
                 None => {
-                    append_http_sse_rate_limit_updates(decoder.finish_frames(), &updates).await;
+                    let frames = decoder.finish_frames();
+                    observe_sse_telemetry(&frames, telemetry.as_ref(), &mut waiting);
+                    append_http_sse_rate_limit_updates(frames, &updates).await;
                     None
                 }
             }
         },
     ))
+}
+
+fn observe_sse_telemetry(
+    frames: &[SseFrame],
+    telemetry: Option<&SessionTelemetry>,
+    waiting: &mut std::time::Duration,
+) {
+    let Some(telemetry) = telemetry else {
+        return;
+    };
+    for frame in frames {
+        // 通用解析器会消费 DONE 控制帧，官方遥测仍为它记录一次成功接收
+        if frame.events().is_empty()
+            && let Ok(raw) = std::str::from_utf8(frame.raw())
+            && sse_frame_is_done(raw)
+        {
+            let kind = raw
+                .lines()
+                .rev()
+                .find_map(|line| {
+                    line.strip_prefix("event:")
+                        .map(|value| value.strip_prefix(' ').unwrap_or(value))
+                })
+                .filter(|value| !value.is_empty())
+                .unwrap_or("message");
+            telemetry.sse_event(kind, "[DONE]", *waiting);
+            *waiting = std::time::Duration::ZERO;
+        }
+        for event in frame.events() {
+            telemetry.sse_event(
+                event
+                    .event
+                    .as_deref()
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or("message"),
+                &event.data,
+                *waiting,
+            );
+            *waiting = std::time::Duration::ZERO;
+        }
+    }
 }
 
 async fn append_http_sse_rate_limit_updates(

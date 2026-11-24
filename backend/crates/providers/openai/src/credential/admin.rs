@@ -139,6 +139,8 @@ struct ParsedOAuthAuthentication {
     access_token: Option<String>,
     refresh_token: Option<String>,
     id_token: Option<String>,
+    protocol_login: Option<Box<super::types::CodexProtocolLoginCredentials>>,
+    protocol_login_device: Option<Box<Value>>,
 }
 
 impl fmt::Debug for ParsedOAuthAuthentication {
@@ -270,6 +272,10 @@ struct CodexCprOAuthExportAccount {
     refresh_token: Option<String>,
     id_token: Option<String>,
     access_token_expires_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    protocol_login: Option<Box<super::types::CodexProtocolLoginCredentials>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    protocol_login_device: Option<Box<Value>>,
 }
 
 /// Provider 验证后的 rotation；App 只做 Core -> Store command 的机械映射
@@ -699,6 +705,8 @@ impl CodexCredentialAdmin {
                             .access_token_expires_at()
                             .map(DateTime::<Utc>::from)
                             .map(|value| value.to_rfc3339()),
+                        protocol_login: data.protocol_login,
+                        protocol_login_device: data.protocol_login_device,
                     })
                 }
             };
@@ -751,6 +759,8 @@ impl CodexCredentialAdmin {
                 ));
                 oauth.cookies.clear();
                 oauth.principal = None;
+                oauth.protocol_login = None;
+                oauth.protocol_login_device = None;
             }
             profile.email = metadata.email;
             profile.plan_type = metadata.chatgpt_plan_type;
@@ -1049,12 +1059,34 @@ impl CodexCredentialAdminService {
                     next_refresh_at: None,
                     enabled: true,
                 })?;
+            let mut credential = prepared.credential;
+            if authentication.protocol_login.as_ref().is_some_and(|login| {
+                prepared
+                    .account
+                    .email()
+                    .is_some_and(|email| !email.eq_ignore_ascii_case(login.username.trim()))
+            }) {
+                return Err(CodexCredentialAdminError::InvalidCredential);
+            }
+            if authentication.protocol_login.is_some()
+                || authentication.protocol_login_device.is_some()
+            {
+                let mut data = CodexCredentialCodec::decode_complete(&credential)
+                    .map_err(|_| CodexCredentialAdminError::InvalidCredential)?;
+                let oauth = data
+                    .oauth_mut()
+                    .ok_or(CodexCredentialAdminError::InvalidCredential)?;
+                oauth.protocol_login = authentication.protocol_login;
+                oauth.protocol_login_device = authentication.protocol_login_device;
+                credential = CodexCredentialCodec::encode_complete(data)
+                    .map_err(|_| CodexCredentialAdminError::InvalidCredential)?;
+            }
             accounts.push(NewProviderAccount {
                 model_access: candidate.model_access,
                 account: prepared
                     .account
                     .with_outbound_proxy(candidate.outbound_proxy),
-                credential: prepared.credential,
+                credential,
             });
         }
         Ok(PreparedCodexAccountImport { accounts })
@@ -1362,6 +1394,29 @@ fn parse_oauth_import_tokens(
         access_token,
         refresh_token,
         id_token,
+        protocol_login: value
+            .get("protocolLogin")
+            .filter(|value| !value.is_null())
+            .map(|value| {
+                let credentials = serde_json::from_value::<
+                    Box<super::types::CodexProtocolLoginCredentials>,
+                >(value.clone())
+                .map_err(|_| CodexCredentialAdminError::InvalidInput)?;
+                super::protocol_login::validate_credentials(&credentials)
+                    .map_err(|_| CodexCredentialAdminError::InvalidInput)?;
+                Ok::<_, CodexCredentialAdminError>(credentials)
+            })
+            .transpose()?,
+        protocol_login_device: value
+            .get("protocolLoginDevice")
+            .filter(|value| !value.is_null())
+            .map(|value| {
+                value
+                    .is_object()
+                    .then(|| Box::new(value.clone()))
+                    .ok_or(CodexCredentialAdminError::InvalidInput)
+            })
+            .transpose()?,
     })
 }
 

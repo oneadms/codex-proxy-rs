@@ -185,23 +185,24 @@ pub async fn initialize(
         CodexCookiePolicy::official().map_err(|_| OpenAiInitializeError::CookiePolicy)?,
         upstream_info,
     ));
-    let core_provider: Arc<dyn Provider> = Arc::new(
-        CodexProvider::new(
-            selector,
-            Arc::clone(&catalog),
-            Arc::clone(&quota),
-            account_feedback,
-            http,
-            profile.clone(),
-            config.base_url().to_owned(),
-            Arc::clone(&websocket_pool),
-            config.stream_max_retries(),
-        )
-        .map_err(OpenAiInitializeError::Provider)?
-        .with_session_identity(session_identity)
-        .with_timezone(config.timezone)
-        .with_live_support(repository.clone()),
-    );
+    let (provider, telemetry_worker) = CodexProvider::new(
+        selector,
+        Arc::clone(&catalog),
+        Arc::clone(&quota),
+        account_feedback,
+        http,
+        profile.clone(),
+        config.base_url().to_owned(),
+        Arc::clone(&websocket_pool),
+        config.stream_max_retries(),
+    )
+    .map_err(OpenAiInitializeError::Provider)?
+    .with_session_identity(session_identity)
+    .with_timezone(config.timezone)
+    .with_live_support(repository.clone())
+    .with_telemetry(config.telemetry.clone())
+    .map_err(|_| OpenAiInitializeError::Worker)?;
+    let core_provider: Arc<dyn Provider> = Arc::new(provider);
     let token_client = Arc::new(
         credential::token_client::openai_token_client(
             config.token_client_config(),
@@ -220,6 +221,13 @@ pub async fn initialize(
         )
         .with_personal_access_token_client(token_client),
     );
+    let protocol_login = Arc::new(credential::CodexProtocolLoginRecovery::new(
+        repository.clone(),
+        Arc::clone(&leases),
+        Arc::clone(&runtime_policy),
+        Arc::clone(&javascript),
+        ports.diagnostics(),
+    ));
     let refresh = Arc::new(CodexCredentialRefreshService::new(
         repository,
         refresher,
@@ -257,13 +265,14 @@ pub async fn initialize(
         websocket_pool,
         desktop_release_status,
     ));
-    let worker_contributions = provider::worker_contributions(
+    let mut worker_contributions = provider::worker_contributions(
         config.timezone,
         refresh,
         quota,
         catalog,
         config.quota_refresh_policy(),
         config.oauth_refresh_enabled(),
+        protocol_login,
         provider::ClientReleaseServices {
             desktop: desktop_release,
             cli: cli_release,
@@ -271,6 +280,7 @@ pub async fn initialize(
         },
     )
     .map_err(|_| OpenAiInitializeError::Worker)?;
+    worker_contributions.push(telemetry_worker);
 
     Ok(ProviderBundle {
         core_provider,

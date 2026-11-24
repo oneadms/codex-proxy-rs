@@ -21,13 +21,12 @@ defineProps<{
   refreshingModels: boolean
   modelOptions: ConnectionTest['connectionTestModelOptions']['value']
   statusView: ConnectionTest['connectionTestStatusView']['value']
-  canSaveDefaultPrompt: boolean
+  loadingPrompt: boolean
 }>()
 
 const emit = defineEmits<{
   test: []
   refreshModels: []
-  saveDefaultPrompt: []
 }>()
 
 const { t } = useI18n({ useScope: 'global' })
@@ -110,21 +109,12 @@ function connectionLogClass(tone: string) {
             <span class="text-z-sm font-heavy text-z-text-quaternary">
               {{ t('accounts.connectionTest.prompt') }}
             </span>
-            <ZButton
-              type="primary"
-              variant="link"
-              size="small"
-              :disabled="status === 'running' || !canSaveDefaultPrompt"
-              @click="emit('saveDefaultPrompt')"
-            >
-              {{ t('accounts.connectionTest.saveDefaultPrompt') }}
-            </ZButton>
           </div>
           <ZTextarea
             v-model="prompt"
             :aria-label="t('accounts.connectionTest.prompt')"
             :rows="3"
-            :disabled="status === 'running'"
+            :disabled="status === 'running' || loadingPrompt"
             :placeholder="t('accounts.connectionTest.promptPlaceholder')"
           />
         </div>
@@ -242,7 +232,7 @@ function connectionLogClass(tone: string) {
       <ZButton
         type="primary"
         :loading="status === 'running'"
-        :disabled="!account || loadingModels || refreshingModels || !selectedModel || !prompt.trim()"
+        :disabled="!account || loadingModels || refreshingModels || loadingPrompt || !selectedModel || !prompt.trim()"
         @click="emit('test')"
       >
         {{ logs.length > 0 || error ? t('accounts.connectionTest.retry') : t('accounts.connectionTest.title') }}

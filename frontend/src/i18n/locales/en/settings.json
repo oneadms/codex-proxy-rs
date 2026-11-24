@@ -1,5 +1,11 @@
 {
   "settings": {
+    "connectionTest": {
+      "title": "Account connection test",
+      "defaultPrompt": "Default prompt",
+      "promptHelp": "Shared by all accounts and editable for each test",
+      "promptRequired": "Enter a default test prompt"
+    },
     "clientProfile": {
       "userAgent": "User agent",
       "clientIdentitySource": "Client identity source",

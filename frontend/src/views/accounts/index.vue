@@ -150,8 +150,7 @@ const {
   connectionTestModelOptions,
   connectionTestPrompt,
   connectionTestStatusView,
-  canSaveDefaultPrompt,
-  saveDefaultPrompt,
+  loadingConnectionTestPrompt,
   openConnectionTest,
   handleRefreshConnectionTestModels,
   handleTestConnection,
@@ -244,6 +243,7 @@ const {
           @import-tasks="showImportTasks = true"
           @delete-selected="showDeleteModal = true"
           @export-selected="handleExportAccounts"
+          @export-protocol-login="handleExportAccounts('protocol_login')"
           @create="openCreateAccount"
           @edit-selected="openBatchEdit"
         >
@@ -399,11 +399,11 @@ const {
       v-model:selected-model="connectionTestSelectedModel"
       v-model:prompt="connectionTestPrompt"
       :account="testingAccount"
-      :can-save-default-prompt="canSaveDefaultPrompt"
       :duration-ms="connectionTestDurationMs"
       :error="connectionTestError"
       :finished-at="connectionTestFinishedAt"
       :loading-models="loadingConnectionTestModels"
+      :loading-prompt="loadingConnectionTestPrompt"
       :refreshing-models="refreshingConnectionTestModels"
       :logs="connectionTestLogs"
       :model="connectionTestModel"
@@ -412,7 +412,6 @@ const {
       :status="connectionTestStatus"
       :status-view="connectionTestStatusView"
       @refresh-models="handleRefreshConnectionTestModels()"
-      @save-default-prompt="saveDefaultPrompt"
       @test="handleTestConnection()"
     />
 

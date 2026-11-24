@@ -695,6 +695,7 @@ impl OpenAiUpstreamProtocol {
 /// Codex HTTP/SSE 上游客户端
 #[derive(Clone)]
 pub struct CodexBackendClient {
+    pub(crate) telemetry: Option<Arc<super::telemetry::CodexTelemetry>>,
     pub(crate) peer_route: Option<reqwest::header::HeaderValue>,
     pub(super) routing_affinity: Option<super::routing_affinity::ChatGptRoutingAffinity>,
     pub(super) privacy: Option<(
@@ -737,6 +738,7 @@ impl CodexBackendClient {
     ) -> Self {
         let base_url = base_url.into().trim_end_matches('/').to_string();
         Self {
+            telemetry: None,
             peer_route: None,
             routing_affinity: None,
             privacy: None,

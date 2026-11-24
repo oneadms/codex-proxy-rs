@@ -304,10 +304,15 @@ impl ExtractedRequestContext {
             parent_thread_id: body_string(body, "parentThreadId"),
             conversation_id: body_string(body, "conversation_id"),
             client_request_id: body_string(body, "x-client-request-id"),
-            turn_id: body_string(body, "turn_id").or_else(|| {
-                client_metadata
-                    .and_then(|metadata| string_value(metadata.get(TURN_ID_CLIENT_METADATA_KEY)))
-            }),
+            turn_id: body_string(body, "turn_id")
+                .or_else(|| body_string(body, "turnId"))
+                .or_else(|| {
+                    client_metadata.and_then(|metadata| {
+                        string_value(metadata.get(TURN_ID_CLIENT_METADATA_KEY))
+                            .or_else(|| string_value(metadata.get("turnId")))
+                    })
+                })
+                .or_else(|| gateway_protocol::openai::codex_turn_id(body, &Map::new())),
             // Responses Lite 在 WebSocket body 中的这个键是官方 header 投影，
             // 不是普通上下文字段的 metadata 回退
             responses_lite: client_metadata.and_then(|metadata| {

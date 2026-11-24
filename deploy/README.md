@@ -437,6 +437,7 @@ host:
 | 上游客户端身份 | “系统设置 → 上游配置 → 客户端身份”；Key 可按 Provider 覆盖，OpenAI Key 可独立配置[安装身份种子](../docs/api.md#key-客户端身份) |
 | 并发与排队 | “系统设置 → 运行设置”；Key 与账号分别设置排队容量和超时，可选择账号排队失败后换号，见[排队规则](../docs/api.md#并发与排队) |
 | 账号错误保护 | “系统设置 → 运行设置 → 错误保护”；默认关闭，按[自定义规则](../docs/api.md#账号错误保护)暂停账号调度 |
+| 连接测试提示词 | “系统设置 → 运行设置 → 账号连接测试”；所有账号共用默认提示词 |
 | 全局请求位置 | “系统设置 → 上游配置 → 请求位置覆盖”；默认关闭，不从 YAML 导入 |
 | 代理位置 | “代理管理”；优先于全局位置，全局关闭时仍可独立生效 |
 
@@ -447,6 +448,52 @@ host:
 省略或设为 `null` 时删除对应请求头。
 修改后重启应用生效。身份与位置字段见 [运行设置 API](../docs/api.md#8-运行设置)
 后台账号操作使用 Provider 自己的官方画像；发布资料刷新不改写用户选择或 `config.yaml`
+
+### Codex 传输遥测
+
+网关在 OpenAI Provider 的 Responses HTTP/SSE 与 WebSocket 收发边界采集传输指标，
+按[官方 Codex `98f8a3311ba7`](https://github.com/openai/codex/tree/98f8a3311ba7cac785e570713127e9127af4043a/codex-rs/otel)的
+OTLP HTTP JSON、Delta 聚合、直方图边界和 Statsig 指标过滤规则导出
+发行构建默认每 60 秒发送到 `https://ab.chatgpt.com/otlp/v1/metrics`，使用官方公开客户端标识和 Zstd 压缩；
+调试构建默认关闭内置 Statsig，自定义 OTLP 仍可用于联调
+内置 Statsig 按官方名单过滤 API 请求计数、耗时和部分引擎指标，自定义 OTLP 保留这些指标
+
+采集包含实际 API 状态与耗时、WS 新建连接与消息收发、SSE 事件，以及上游 WS timing 事件中的引擎耗时。
+资源和标签使用本次上游客户端画像的版本、系统、来源及模型，按账号出口独立聚合并复用同一代理；
+指标正文不包含提示词、完整请求、账号 ID 或账号认证头。
+OAuth 与 Responses API Key 账号分别使用 `chatgpt`、`api_key` 认证标签；Messages 协议和 CPR 互联转发不生成这组指标
+上报异步执行，失败不改变模型响应；关闭时在 Host 后台清理预算内尝试导出尚存指标
+
+启动配置 `openai.telemetry.enabled: false` 关闭全部网关遥测，
+`openai.telemetry.metrics_exporter.type: none` 仅关闭指标，`openai.telemetry.analytics_enabled: false` 仅关闭 analytics。
+自定义收集器使用以下配置，地址须包含完整指标路径；`headers` 仅用于收集器认证，修改后重启应用
+
+```yaml
+openai:
+  telemetry:
+    enabled: true
+    analytics_enabled: true
+    environment: dev
+    metrics_exporter:
+      type: otlp-http
+      endpoint: 'http://127.0.0.1:4318/v1/metrics'
+      headers: {}
+```
+
+analytics 默认启用，按[官方事件协议](https://github.com/openai/codex/tree/98f8a3311ba7cac785e570713127e9127af4043a/codex-rs/analytics)
+向 `openai.api.base_url` 下的 `/codex/analytics-events/events` 发送 `{"events":[...]}`。
+目前采集 Responses HTTP/SSE 与 WS 中有完整开始、结束记录的 `codex_web_search_event` 和 `codex_image_generation_event`，
+使用所选 OAuth 账号的认证、代理及本次冻结的客户端画像，内部调用标为 `in_process`。
+事件中的客户端名称和版本从实际 UA 提取，优先使用末尾客户端后缀，没有后缀时读取前部的 `名称/版本`，自定义 UA 同样生效；无法提取时保留未知
+`thread_source`、`subagent_source` 和 `root_turn_id` 读取本次请求的同名字段或驼峰别名，保留显式 `null`，不推断线程关系。
+优先读取本帧 `client_metadata` 的直接字段，再读取顶层字段、帧内 turn metadata，最后回退到请求头中的 turn metadata。
+实验能力优先使用请求中的声明，包括 `false` 和 `null`；缺省时按已核实的官方 TUI、Exec 初始化声明使用 `true`，其他入口保留未知
+
+事件使用已完成账号隔离和隐私处理的会话身份，并在账号内去重。
+队列最多保留 256 条待发事件，请求超时 10 秒，关闭时在最多 25 秒内尝试排空；发送失败不重试，不影响模型响应。
+API Key 账号按官方资格规则不发送这两类事件；调试构建也可发送 analytics，不受内置 Statsig 开关影响。
+事件只包含工具类型、状态、观测时间和查询数量等摘要，不包含搜索词、URL、提示词或图片正文。
+客户端的本地工具执行、线程归档、界面操作和完整用户轮次仍由实际执行这些操作的客户端上报
 
 ### CPR 互联
 
@@ -496,7 +543,7 @@ services:
 禁用代理的账号使用部署默认出口。出口测试不保存账号设置，也不验证账号权限或额度；账号可用性使用账号连接测试
 
 打开账号的「测试连接」弹窗会预填默认提示词，确认模型和提示词后点击「测试连接」发送请求。
-「设为默认」将当前提示词保存到此浏览器，临时修改不影响下次预填
+默认提示词在“系统设置 → 运行设置 → 账号连接测试”中统一保存，所有账号共用，弹窗中的临时修改不影响下次预填
 
 在代理列表点击关联账号数量，再点击“分配账号”，搜索并跨页勾选账号后点击右上角的“分配”，一次最多 1000 个。
 已使用此代理的账号不可重复选择；所选账号原有代理会被替换，凭据、分组与调度设置保留。禁用代理须先启用
@@ -759,7 +806,8 @@ enabled = false
 metrics_exporter = "none"
 ```
 
-这两个开关不清理模型请求中的工作目录、Git metadata、用户内容或工具结果。
+这两个开关只控制客户端遥测；网关遥测通过[Codex 传输遥测](#codex-传输遥测)的启动配置控制。
+模型请求中的工作目录、Git metadata、用户内容和工具结果仍按正文兼容规则处理
 
 ### 登录与生图排查
 

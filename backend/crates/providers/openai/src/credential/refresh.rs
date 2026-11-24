@@ -318,6 +318,38 @@ impl CodexCredentialRefreshService {
                 failure,
             )
             .await;
+            if !matches!(failure, RefreshFailure::Banned { .. })
+                && failure
+                    .upstream()
+                    .is_some_and(|upstream| upstream.status() == 401)
+            {
+                let current = self
+                    .repository
+                    .store()
+                    .load_credential(due.account.id(), due.account.revision())
+                    .await
+                    .map_err(CredentialRepositoryError::from)?;
+                let data = super::CodexCredentialCodec::decode_complete(&current.credential)
+                    .map_err(CredentialRepositoryError::from)?;
+                if data
+                    .oauth()
+                    .is_some_and(|oauth| oauth.protocol_login.is_some())
+                {
+                    return self
+                        .persist_terminal(
+                            &due.account,
+                            CredentialState::Expired,
+                            AccountErrorReason::AccessTokenExpired,
+                            RefreshFailureContext::new(
+                                "protocol_relogin_required",
+                                failure.message().map(str::to_owned),
+                                failure.upstream(),
+                            ),
+                            CodexCredentialRefreshOutcome::Invalidated { account_id },
+                        )
+                        .await;
+                }
+            }
         }
         if recovery_window_exhausted && let Err(failure) = &refresh_result {
             let message = failure.message().map(str::to_owned);

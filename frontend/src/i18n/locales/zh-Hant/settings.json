@@ -1,5 +1,11 @@
 {
   "settings": {
+    "connectionTest": {
+      "title": "帳號連線測試",
+      "defaultPrompt": "預設提示詞",
+      "promptHelp": "所有帳號共用，可在測試彈窗中臨時修改",
+      "promptRequired": "請輸入預設測試提示詞"
+    },
     "clientProfile": {
       "userAgent": "用戶代理",
       "clientIdentitySource": "客戶端身份來源",

@@ -535,6 +535,7 @@ HTTP 请求头、正文 metadata、WS 副本及已识别的 Desktop 自动 Git �
 轮次及父子轮次引用保留客户端原值，包括输入项的 `internal_chat_message_metadata_passthrough.turn_id`、
 请求 metadata 中的 `turn_id`、`parent_turn_id`、`root_turn_id`，以及 `x-client-turn-id`、
 Images 的 `x-codex-image-turn-id` 和 Desktop 自动 Git 上下文的 `clientUserMessageId`。
+轮次解析接受正文、`client_metadata` 和 turn metadata 中的 `turnId` 别名，沿用请求提供的值。
 输入项元数据保持不变。Search 的会话 `id` 按同一安装身份域映射，只替换该值的原始字节，其余正文保持不变。
 `prompt_cache_key` 同样按安装身份映射，保留同一身份内的缓存共享关系。
 选中 Codex OAuth 账号后，缺失的会话、线程、窗口和轮次身份在出站副本中补齐，
@@ -1558,7 +1559,7 @@ OAuth 等待回调期间不持有保护；提交仍拒绝已删除或连接配�
 ### 账号连接测试 SSE
 
 `POST /api/admin/accounts/connection-test` 固定探测请求指定的账号，采用当前全局客户端身份，不参与普通账号轮换。
-JSON 正文中的 `prompt` 原样作为测试输入，省略时使用 `Reply with exactly OK.`，不接受空字符串或纯空白。
+JSON 正文中的 `prompt` 原样作为测试输入，省略时使用全局运行设置的 `accountConnectionTestPrompt`，不接受空字符串或纯空白。
 `request` 事件显示本次使用的提示词
 
 成功流包含 `test_start`、`request`、`content`、`test_complete` 事件；失败事件为：
@@ -1652,7 +1653,14 @@ JSON 正文中的 `prompt` 原样作为测试输入，省略时使用 `Reply wit
 协议登录要求已绑定的代理及其位置和时区，从密码、2FA、登录跳转、会话管理到 Codex 授权与令牌交换使用同一个 Camoufox 浏览器及代理配置。
 登录后读取账号会话列表，保留唯一标记为 `is_current_device` 的会话，逐一退出其他会话并复查列表，确认成功后才请求 Codex 授权。
 回调 URL 只用于校验地址与 `state`、提取授权码，不实际请求 loopback 地址；授权码通过原代理交换令牌，再按普通 OAuth 导入合同入库并保留节点绑定。
-设备标识、屏幕、硬件及 Canvas 等设备参数随账号凭据保存，UA 跟随已安装的浏览器版本，时区采用节点配置。每次登录使用新的 Cookie 容器和网页存储，流程结束后关闭浏览器，原始密码、2FA 密钥和网页登录状态不作为账号凭据持久化。
+设备标识、屏幕、硬件及 Canvas 等设备参数随账号凭据保存，UA 跟随已安装的浏览器版本，时区采用节点配置
+
+协议登录成功后保存用户名、密码和 2FA 密钥，供敏感导出及自动重登使用，网页登录的 Cookie 和网页存储在流程结束后释放
+保存的账号密码及 2FA 不出现在普通账号查询、任务结果或诊断导出中
+
+模型请求或后台令牌刷新收到认证失败 401 时，已保存协议登录材料的账号退出调度，后台每 30 秒检查并通过绑定节点自动重登
+重登成功后更新令牌并恢复账号，当前失败请求仍遵循原有重试与交付规则；重登失败保留错误状态，需通过协议登录重新导入
+
 登录接口通过对应站点执行原生 `fetch`，Sentinel SDK 在同一浏览器中实时加载和执行；浏览器下载、插件更新及 GeoIP 外部查询不在账号登录阶段执行。
 上游默认进入免密邮箱登录时，核对登录会话与用户名后选择官方密码入口；上游明确不提供密码方式、要求额外身份验证或切换后仍要求邮箱验证码时终止当前条目。
 需要手机验证或 SDK 无法完成的人工安全校验时也终止当前条目；账号停用、代理失败、会话清理失败或回调校验失败时不会继续授权或直连重试。
@@ -1737,7 +1745,11 @@ RT-only 使用同一形状，只提交 `refreshToken`。不得把真实 token �
 
 账号列表的每个 item 返回轻量 `groups: [{ id, name, enabled }]`
 
-OpenAI 的 CPR 导出保持 OAuth 账号的既有 token 与过期时间字段。OpenAI 与 xAI 的 CPR 账号条目均包含
+OpenAI 的 CPR 导出保持 OAuth 账号的既有 token 与过期时间字段，协议登录账号同时包含 `protocolLogin: { username, password, totpSecret }` 和 `protocolLoginDevice`，重新导入时恢复
+管理端勾选账号后可通过「更多操作 → 导出账号密码 2FA」下载 `username----password----2fa` 文本，仅包含所选账号中已保存的协议登录材料
+未保存过密码和 2FA 的已有账号需要通过协议登录重新导入后才能使用导出和自动重登
+
+OpenAI 与 xAI 的 CPR 账号条目均包含
 `modelAccess`，重新导入时恢复；导入 `settings.modelAccess` 显式提供时覆盖条目中的政策。
 导入条目未提供 `modelAccess` 且 `settings` 未指定该字段时，新账号默认 `all`，已有账号保留原值；凭据刷新、重新授权和目录刷新均保留政策。
 sub2api 的 `credentials.model_mapping` 不转换为本项目的账号模型限制
@@ -2243,6 +2255,7 @@ HTTP 返回 `429`，`error.code` 为 `key_daily_budget_exceeded` 或 `key_weekly
 | [客户端门禁](#1-鉴权与公共约定) | `minCodexDesktopVersion`、`minCodexCliVersion` |
 | [历史保留](#历史保留) | `usageRetentionDays`、`opsEventRetentionDays`、`auditRetentionDays` |
 | [账号错误保护](#账号错误保护) | `accountErrorProtection` |
+| [账号连接测试](#账号连接测试) | `accountConnectionTestPrompt` |
 | [账号预热](#账号预热) | `accountWarmupEnabled`、`accountWarmupCron`、`accountWarmupModel` |
 | [主动额度重置卡](#主动额度重置卡) | `resetCreditOnLowWeeklyQuota`、`resetCreditLeadMinutes`、`resetCreditMaxWeeklyRemainingPercent` |
 
@@ -2256,6 +2269,11 @@ HTTP 返回 `429`，`error.code` 为 `key_daily_budget_exceeded` 或 `key_weekly
 
 统计在后台异步更新，清理期间可短暂包含已删除请求的统计贡献，投影完成后更新为剩余数据。
 查询范围无需随保留期缩短，超出保留期的已清理数据不再计入结果
+
+### 账号连接测试
+
+`accountConnectionTestPrompt` 为所有账号共用的默认测试提示词，默认 `Reply with exactly OK.`，不接受空字符串或纯空白，保存和发送时保留原始文本。
+账号测试弹窗每次打开时读取此值，弹窗中的临时修改只用于本次测试。后台错误保护恢复探测使用固定的轻量输入
 
 ### 账号预热
 

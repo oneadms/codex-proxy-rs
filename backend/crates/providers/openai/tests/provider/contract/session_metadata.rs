@@ -270,6 +270,51 @@ async fn partial_metadata_keeps_client_turn_and_extensions_while_filling_missing
 }
 
 #[tokio::test]
+async fn supplied_turn_alias_is_preserved_when_completing_http_and_websocket_metadata() {
+    let store = Arc::new(MemoryAccountStore::default());
+    create_account(&store, "acct_provider_contract").await;
+    let original = json!({"turnId":"client-turn", "root_turn_id":"client-root-turn"});
+    for supplied in [
+        json!({"turnId":"client-turn"}),
+        json!({"client_metadata":{"turnId":"client-turn"}}),
+        json!({"turnMetadata":original.to_string()}),
+        json!({"turn_metadata":original.to_string()}),
+        json!({"client_metadata":{"x-codex-turn-metadata":original.to_string()}}),
+    ] {
+        for websocket in [false, true] {
+            let mut request = supplied.clone();
+            request["input"] = json!("question");
+            let (headers, body) = capture(
+                &store,
+                request,
+                Map::new(),
+                websocket,
+                "req_supplied_turn",
+                "key_openai_contract",
+            )
+            .await;
+            let header_metadata: Value =
+                serde_json::from_str(headers["x-codex-turn-metadata"].to_str().unwrap()).unwrap();
+            let body_metadata: Value = serde_json::from_str(
+                body["client_metadata"]["x-codex-turn-metadata"]
+                    .as_str()
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(header_metadata["turn_id"], "client-turn", "{supplied}");
+            assert_eq!(body_metadata["turn_id"], "client-turn", "{supplied}");
+            assert_eq!(
+                body["client_metadata"]["turn_id"], "client-turn",
+                "{supplied}"
+            );
+            if supplied.get("turnId").is_some() {
+                assert_eq!(body["turnId"], "client-turn");
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn client_metadata_projects_logical_identity_without_replacing_routing_headers() {
     let store = Arc::new(MemoryAccountStore::default());
     create_account(&store, "acct_provider_contract").await;

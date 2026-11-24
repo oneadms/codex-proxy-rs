@@ -1,5 +1,11 @@
 {
   "settings": {
+    "connectionTest": {
+      "title": "账号连接测试",
+      "defaultPrompt": "默认提示词",
+      "promptHelp": "所有账号共用，可在测试弹窗中临时修改",
+      "promptRequired": "请输入默认测试提示词"
+    },
     "clientProfile": {
       "userAgent": "用户代理",
       "clientIdentitySource": "客户端身份来源",

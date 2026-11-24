@@ -223,6 +223,14 @@ struct SelectedGenerate {
 }
 
 impl CodexProvider {
+    pub(crate) fn with_telemetry(
+        mut self,
+        settings: crate::config::CodexTelemetrySettings,
+    ) -> Result<(Self, WorkerContribution), WorkerDefinitionError> {
+        let (client, worker) = self.client.with_telemetry(settings)?;
+        self.client = client;
+        Ok((self, worker))
+    }
     fn prepare_generate_request(
         &self,
         generate: &GenerateRequest,

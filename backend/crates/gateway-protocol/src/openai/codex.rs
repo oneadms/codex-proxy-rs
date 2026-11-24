@@ -62,16 +62,20 @@ pub fn turn_metadata_session_id(metadata: &str) -> Option<String> {
 #[must_use]
 pub fn codex_turn_id(body: &Map<String, Value>, context: &Map<String, Value>) -> Option<String> {
     client_metadata_string(body, "turn_id")
+        .or_else(|| client_metadata_string(body, "turnId"))
         .map(str::to_owned)
         .or_else(|| request_turn_metadata(body).and_then(turn_metadata_turn_id))
         .or_else(|| non_empty_string(context.get("turn_metadata")).and_then(turn_metadata_turn_id))
         .or_else(|| codex_identity_field(body, context, "turn_id"))
+        .or_else(|| codex_identity_field(body, context, "turnId"))
 }
 
 #[must_use]
 pub fn turn_metadata_turn_id(metadata: &str) -> Option<String> {
     let metadata: Value = serde_json::from_str(metadata).ok()?;
-    non_empty_string(metadata.get("turn_id")).map(str::to_owned)
+    non_empty_string(metadata.get("turn_id"))
+        .or_else(|| non_empty_string(metadata.get("turnId")))
+        .map(str::to_owned)
 }
 
 /// 各 Codex 端点共用的显式线程身份，与根会话采用相同的来源优先级

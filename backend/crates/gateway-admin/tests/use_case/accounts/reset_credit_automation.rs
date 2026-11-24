@@ -719,6 +719,7 @@ async fn threshold_services(
     super::super::AdminHarness::new()
         .accounts(store)
         .settings(Arc::new(StaticSettingsStore {
+            account_connection_test_prompt: None,
             reset_credit_on_low_weekly_quota: early,
             reset_credit_max_weekly_remaining_percent: max_remaining,
         }))

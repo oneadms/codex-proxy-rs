@@ -8,6 +8,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
 import AccountAffinityCard from './components/AccountAffinityCard.vue'
+import AccountConnectionTestCard from './components/AccountConnectionTestCard.vue'
 import AccountWarmupCard from './components/AccountWarmupCard.vue'
 import SettingsBackupSection from './components/backup/SettingsBackupSection.vue'
 import ClientProfileCard from './components/ClientProfileCard.vue'
@@ -221,6 +222,7 @@ watch(section, (value) => {
             v-model:openai-guardian-reserved-concurrency="openaiGuardianReservedConcurrencyValue"
           />
           <AccountErrorProtectionCard v-model="form.accountErrorProtection" :disabled="disabled" />
+          <AccountConnectionTestCard v-model="form.accountConnectionTestPrompt" />
           <AccountWarmupCard
             v-model:enabled="form.accountWarmupEnabled"
             v-model:cron="form.accountWarmupCron"

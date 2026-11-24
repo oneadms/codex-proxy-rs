@@ -28,6 +28,10 @@ hmac = "0.13.0"
 sha1 = "0.11.0"
 data-encoding = "2.11.0"
 lru = "0.19.0"
+# 遥测沿用官方 Codex 的 OpenTelemetry SDK 与 OTLP JSON 编码
+opentelemetry = { version = "=0.31.0", default-features = false, features = ["metrics"] }
+opentelemetry_sdk = { version = "=0.31.0", default-features = false, features = ["metrics", "experimental_metrics_custom_reader"] }
+opentelemetry-otlp = { version = "=0.31.0", default-features = false, features = ["metrics", "http-json", "reqwest-client", "zstd-http"] }
 # TLS 依赖以官方 Core 锁文件为基线，安全补丁经握手特征核验后精确固定
 # 包含用于约束传递依赖的直接声明
 # hyper-util 固定到包含 SOCKS IPv6 修复的正式版

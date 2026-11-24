@@ -2,7 +2,7 @@
 
 use gateway_protocol::openai::{
     codex_responses_request_semantics, codex_responses_request_semantics_with_turn_metadata,
-    codex_session_id, codex_thread_id,
+    codex_session_id, codex_thread_id, codex_turn_id, turn_metadata_turn_id,
 };
 use serde_json::{Map, Value, json};
 
@@ -166,6 +166,52 @@ fn codex_thread_should_use_explicit_identity_and_never_guess_from_other_ids() {
             expected
         );
     }
+}
+
+#[test]
+fn turn_identity_preserves_request_aliases_and_per_frame_metadata_priority() {
+    for (body, context, expected) in [
+        (json!({"turnId":"client-turn"}), json!({}), "client-turn"),
+        (
+            json!({"client_metadata":{"turnId":"client-turn"}}),
+            json!({}),
+            "client-turn",
+        ),
+        (
+            json!({"turnMetadata":"{\"turnId\":\"frame-turn\"}"}),
+            json!({"turn_metadata":"{\"turn_id\":\"handshake-turn\"}"}),
+            "frame-turn",
+        ),
+        (
+            json!({"turn_metadata":"{\"turnId\":\"client-turn\"}"}),
+            json!({}),
+            "client-turn",
+        ),
+        (
+            json!({"client_metadata":{"x-codex-turn-metadata":"{\"turnId\":\"client-turn\"}"}}),
+            json!({}),
+            "client-turn",
+        ),
+        (
+            json!({}),
+            json!({"turn_metadata":"{\"turnId\":\"header-turn\"}"}),
+            "header-turn",
+        ),
+        (
+            json!({"client_metadata":{"turn_id":"canonical", "turnId":"alias"}}),
+            json!({}),
+            "canonical",
+        ),
+    ] {
+        assert_eq!(
+            codex_turn_id(&object(body), &object(context)).as_deref(),
+            Some(expected)
+        );
+    }
+    assert_eq!(
+        turn_metadata_turn_id(r#"{"turn_id":"canonical","turnId":"alias"}"#).as_deref(),
+        Some("canonical")
+    );
 }
 
 #[test]

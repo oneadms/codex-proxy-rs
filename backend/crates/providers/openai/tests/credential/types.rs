@@ -49,6 +49,13 @@ fn plaintext_provider_schema_round_trips_dynamic_cookie_data() {
         }),
         installation_id: "00000000-0000-4000-8000-000000000001".to_owned(),
         protocol_login_device: None,
+        protocol_login: Some(Box::new(
+            provider_openai::credential::CodexProtocolLoginCredentials {
+                username: "fixture@example.invalid".to_owned(),
+                password: "password-private".to_owned(),
+                totp_secret: "totp-private".to_owned(),
+            },
+        )),
         access_token: "at".to_owned(),
         refresh_token: Some("rt".to_owned()),
         id_token: None,
@@ -70,6 +77,15 @@ fn plaintext_provider_schema_round_trips_dynamic_cookie_data() {
     assert_eq!(decoded.oauth().expect("OAuth data").schema_version, 1);
     assert_eq!(decoded.cookies()[0].name, "oai-did");
     assert!(!format!("{decoded:?}").contains("cookie-private"));
+    let login = decoded.oauth().unwrap().protocol_login.as_ref().unwrap();
+    assert_eq!(login.password, "password-private");
+    for value in [
+        "fixture@example.invalid",
+        "password-private",
+        "totp-private",
+    ] {
+        assert!(!format!("{decoded:?}").contains(value));
+    }
 }
 
 #[test]

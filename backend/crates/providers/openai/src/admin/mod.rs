@@ -516,7 +516,7 @@ impl ProviderAdmin for OpenAiAdminProvider {
         command: PrepareCredentialImport,
     ) -> Result<PreparedCredentialImport, ProviderAdminError> {
         let document = Value::Object(command.document.into_provider_data().into_inner());
-        let (document, login_device) = if document
+        let (document, login_material) = if document
             .get("authentication_kind")
             .and_then(Value::as_str)
             == Some("protocol_login")
@@ -529,7 +529,7 @@ impl ProviderAdmin for OpenAiAdminProvider {
                 self.accounts.as_ref(),
             )
             .await?;
-            (login.tokens, Some(login.device))
+            (login.tokens, Some((login.device, login.credentials)))
         } else {
             (document, None)
         };
@@ -544,12 +544,14 @@ impl ProviderAdmin for OpenAiAdminProvider {
         let observed_at = Utc::now();
         let mut credentials = Vec::with_capacity(prepared.accounts().len());
         for mut account in prepared.into_accounts() {
-            if let Some(device) = &login_device {
+            if let Some((device, credentials)) = &login_material {
                 let mut data = CodexCredentialCodec::decode_complete(&account.credential)
                     .map_err(|_| provider_admin_error(ProviderAdminErrorKind::Invalid))?;
-                data.oauth_mut()
-                    .ok_or_else(|| provider_admin_error(ProviderAdminErrorKind::Invalid))?
-                    .protocol_login_device = Some(Box::new(device.clone()));
+                let oauth = data
+                    .oauth_mut()
+                    .ok_or_else(|| provider_admin_error(ProviderAdminErrorKind::Invalid))?;
+                oauth.protocol_login_device = Some(Box::new(device.clone()));
+                oauth.protocol_login = Some(credentials.clone());
                 account.credential = CodexCredentialCodec::encode_complete(data)
                     .map_err(|_| provider_admin_error(ProviderAdminErrorKind::Invalid))?;
             }

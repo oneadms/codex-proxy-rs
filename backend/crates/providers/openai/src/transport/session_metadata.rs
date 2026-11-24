@@ -60,11 +60,11 @@ pub(crate) fn complete_session_metadata(
         .client_turn_id
         .clone()
         .or_else(|| {
-            supplied_metadata
-                .as_ref()?
-                .get("turn_id")?
-                .as_str()
-                .map(str::to_owned)
+            request
+                .turn_metadata
+                .as_deref()
+                .or(body_metadata.as_deref())
+                .and_then(gateway_protocol::openai::turn_metadata_turn_id)
         })
         .unwrap_or_else(|| generated_id("turn", client_key_id, request_id));
     if !request.body().contains_key("prompt_cache_key") {

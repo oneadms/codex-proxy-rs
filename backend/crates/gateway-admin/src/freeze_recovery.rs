@@ -165,7 +165,8 @@ impl FreezeRecoveryTask {
             .test_connection(
                 AccountProbeTarget::FreezeRecovery(account.clone()),
                 model,
-                None,
+                // 自动恢复只需轻量探测，不使用管理员配置的手动测试输入
+                Some("Reply with exactly OK.".to_owned()),
             )
             .await
         {

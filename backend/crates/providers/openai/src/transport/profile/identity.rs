@@ -14,6 +14,21 @@ use super::selection::{
 };
 use super::{CodexWireProfile, CodexWireProfileState};
 
+/// 从实际 UA 提取客户端名称和版本，区分客户端版本与前部的 Core 版本
+pub(crate) fn app_server_client_identity(user_agent: &str) -> Option<(&str, &str)> {
+    // 官方末尾括号承载 clientInfo；前面的操作系统括号不属于客户端身份
+    let client_info = user_agent.rsplit_once(" (").and_then(|(prefix, suffix)| {
+        prefix.contains(')').then_some(())?;
+        suffix.strip_suffix(')')?.rsplit_once("; ")
+    });
+    let (name, version) = client_info.or_else(|| {
+        let (name, rest) = user_agent.split_once('/')?;
+        Some((name, rest.split_ascii_whitespace().next()?))
+    })?;
+    let (name, version) = (name.trim(), version.trim());
+    (!name.is_empty() && !version.is_empty()).then_some((name, version))
+}
+
 impl CodexWireProfileState {
     /// 后台模型操作没有 Client Key，按当前全局选择冻结整套身份
     pub(crate) async fn resolve_global_request_profile(

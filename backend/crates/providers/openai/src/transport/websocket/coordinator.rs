@@ -509,8 +509,12 @@ async fn connect_websocket_connection(
     proxy_permit: Option<pool::ProxyConnectionPermit>,
 ) -> Result<(PooledWebSocketConnection, Duration), CodexWebSocketExchangeError> {
     let started_at = Instant::now();
-    let (websocket, response) =
-        connect_pumped_websocket(connection, context, fast_path, proxy_permit).await?;
+    let connected = connect_pumped_websocket(connection, context, fast_path, proxy_permit).await;
+    let connect_elapsed = started_at.elapsed();
+    if let Some(telemetry) = &connection.telemetry {
+        telemetry.websocket_connect(connect_elapsed, connected.is_ok());
+    }
+    let (websocket, response) = connected?;
     Ok((
         PooledWebSocketConnection {
             websocket,
@@ -519,7 +523,7 @@ async fn connect_websocket_connection(
             created_at: tokio::time::Instant::now(),
             initial_search_declared: None,
         },
-        started_at.elapsed(),
+        connect_elapsed,
     ))
 }
 
@@ -638,7 +642,12 @@ pub(crate) async fn execute_prepared_response_create_request_stream(
         "headers": gateway_core::diagnostics::diagnostic_headers(metadata.diagnostics.trace_headers.iter().map(|(name, value)| (name.as_str(), value.as_str()))),
     }));
     trace.capture("upstream.request.body", request.payload_text().as_bytes());
-    if let Err(error) = send_websocket_request(&websocket, request.payload_text()).await {
+    let started = Instant::now();
+    let sent = send_websocket_request(&websocket, request.payload_text()).await;
+    if let Some(telemetry) = &request.connection.telemetry {
+        telemetry.websocket_request(started.elapsed(), sent.is_ok());
+    }
+    if let Err(error) = sent {
         let not_started = matches!(error, CodexWebSocketExchangeError::SendNotStarted);
         let observation = websocket.observation();
         let observation = if observation.exit_reason() == "running" {
@@ -686,6 +695,7 @@ pub(crate) async fn execute_prepared_response_create_request_stream(
         stream_idle_timeout,
         trace,
         response_control,
+        request.connection.telemetry.clone(),
     );
     exchange.pool_decision = pool_decision;
     exchange.connection_local_continuation = connection_local_available;

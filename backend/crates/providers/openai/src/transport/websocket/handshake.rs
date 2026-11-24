@@ -92,6 +92,7 @@ impl CodexWebSocketConnection {
             permessage_deflate: true,
             outbound_proxy: None,
             connection_budget: None,
+            telemetry: None,
         }
     }
 

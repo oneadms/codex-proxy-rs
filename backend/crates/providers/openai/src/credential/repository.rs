@@ -46,6 +46,37 @@ impl CodexCredentialRepository {
         access_token_expires_at: Option<SystemTime>,
         next_refresh_at: Option<SystemTime>,
     ) -> Result<CredentialRevision, CredentialRepositoryError> {
+        self.rotate_oauth_secret(
+            account,
+            secret,
+            access_token_expires_at,
+            next_refresh_at,
+            None,
+        )
+        .await
+    }
+
+    pub(crate) async fn rotate_protocol_login(
+        &self,
+        account: &ProviderAccount,
+        secret: CodexOAuthSecret,
+        device: serde_json::Value,
+    ) -> Result<CredentialRevision, CredentialRepositoryError> {
+        let expires_at =
+            super::types::parse_access_token_expiration(secret.access_token.expose_secret())
+                .map(SystemTime::from);
+        self.rotate_oauth_secret(account, secret, expires_at, None, Some(device))
+            .await
+    }
+
+    async fn rotate_oauth_secret(
+        &self,
+        account: &ProviderAccount,
+        secret: CodexOAuthSecret,
+        access_token_expires_at: Option<SystemTime>,
+        next_refresh_at: Option<SystemTime>,
+        login_device: Option<serde_json::Value>,
+    ) -> Result<CredentialRevision, CredentialRepositoryError> {
         let current = self
             .store
             .load_credential(account.id(), account.revision())
@@ -56,6 +87,11 @@ impl CodexCredentialRepository {
         let oauth = data
             .oauth_mut()
             .ok_or(CredentialRepositoryError::InvalidCredentialData(None))?;
+        if let Some(device) = login_device {
+            // 协议重登已退出旧会话，不能继续发送原 Cookie
+            oauth.cookies.clear();
+            oauth.protocol_login_device = Some(Box::new(device));
+        }
         oauth.access_token = secret.access_token.expose_secret().to_owned();
         oauth.refresh_token = secret
             .refresh_token

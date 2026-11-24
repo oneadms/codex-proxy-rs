@@ -74,6 +74,7 @@ fn runtime_settings(enabled: bool, probe_enabled: bool) -> RuntimeSettings {
                 ..Default::default()
             },
             account_warmup_enabled: false,
+            account_connection_test_prompt: "手动连接测试的全局输入".to_owned(),
             account_warmup_cron: "0 8 * * *".to_owned(),
             account_warmup_model: None,
             reset_credit_lead_minutes: 10,
@@ -252,6 +253,13 @@ impl AccountProbe for FailingProbe {
             AccountProbeTarget::FreezeRecovery(_)
         ));
         assert_eq!(request.upstream_model.as_str(), "snapshot-model");
+        let gateway_core::operation::Operation::Generate(operation) = request.operation else {
+            panic!("recovery probe must generate a response");
+        };
+        assert_eq!(
+            operation.protocol_payload().body()["input"],
+            "Reply with exactly OK."
+        );
         Box::pin(async {
             Err(AccountProbeError::new(
                 gateway_core::error::GatewayError::new(

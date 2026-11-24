@@ -1,8 +1,11 @@
 //! 密码与 TOTP 登录、其他会话退出及固定代理的 Codex 授权编排
 
 mod client;
+mod recovery;
 mod sentinel;
 mod totp;
+
+pub(crate) use recovery::CodexProtocolLoginRecovery;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use gateway_admin::ports::provider::{ProviderAdminError, ProviderAdminErrorKind};
@@ -34,6 +37,7 @@ struct LoginInput {
 pub(crate) struct PreparedProtocolLogin {
     pub(crate) tokens: Value,
     pub(crate) device: Value,
+    pub(crate) credentials: Box<super::types::CodexProtocolLoginCredentials>,
 }
 
 pub(crate) async fn prepare_protocol_login(
@@ -45,20 +49,18 @@ pub(crate) async fn prepare_protocol_login(
 ) -> Result<PreparedProtocolLogin, ProviderAdminError> {
     let input: LoginInput = serde_json::from_value(document)
         .map_err(|_| invalid("协议登录需提供用户名、密码和 2FA 密钥"))?;
-    if input.authentication_kind != "protocol_login"
-        || input.username.is_empty()
-        || input.username.len() > 320
-        || input.username.chars().any(char::is_control)
-        || input.password.expose_secret().is_empty()
-        || input.password.expose_secret().len() > 1024
-        || input.totp_secret.expose_secret().len() > 1024
-    {
-        return Err(invalid("协议登录的用户名或密码格式不合法"));
+    let credentials = Box::new(super::types::CodexProtocolLoginCredentials {
+        username: input.username.clone(),
+        password: input.password.expose_secret().to_owned(),
+        totp_secret: input.totp_secret.expose_secret().to_owned(),
+    });
+    validate_credentials(&credentials)?;
+    if input.authentication_kind != "protocol_login" {
+        return Err(invalid("协议登录类型不合法"));
     }
     // 在任何网络请求之前检查出口和密钥，缺少节点时不能使用部署出口
     let proxy = proxy.ok_or_else(|| invalid("协议登录必须绑定节点代理"))?;
     let location = location.ok_or_else(|| invalid("协议登录节点尚未设置位置和时区"))?;
-    totp::generate(input.totp_secret.expose_secret(), 0)?;
     let saved = if input.change_device {
         None
     } else {
@@ -69,7 +71,11 @@ pub(crate) async fn prepare_protocol_login(
         let result = login(&client, input).await;
         let device = client.device.clone();
         client.close().await;
-        result.map(|tokens| PreparedProtocolLogin { tokens, device })
+        result.map(|tokens| PreparedProtocolLogin {
+            tokens,
+            device,
+            credentials,
+        })
     })
     .await
     .map_err(|_| {
@@ -78,6 +84,23 @@ pub(crate) async fn prepare_protocol_login(
             ProviderAdminErrorKind::Ambiguous,
         )
     })?
+}
+
+pub(crate) fn validate_credentials(
+    credentials: &super::types::CodexProtocolLoginCredentials,
+) -> Result<(), ProviderAdminError> {
+    if credentials.username.trim().is_empty()
+        || credentials.username.len() > 320
+        || credentials.username.chars().any(char::is_control)
+        || credentials.password.is_empty()
+        || credentials.password.len() > 1024
+        || credentials.password.contains(['\r', '\n'])
+        || credentials.totp_secret.len() > 1024
+    {
+        return Err(invalid("协议登录的用户名或密码格式不合法"));
+    }
+    totp::generate(&credentials.totp_secret, 0)?;
+    Ok(())
 }
 
 async fn saved_device(

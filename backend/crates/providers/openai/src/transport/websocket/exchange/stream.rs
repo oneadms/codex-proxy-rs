@@ -60,6 +60,8 @@ impl StreamWebSocketDiscardReason {
     }
 }
 
+// 流的连接归还、取消、诊断和遥测在同一启动边界交接，不拆成独立的生命周期
+#[expect(clippy::too_many_arguments)]
 pub(in crate::transport::websocket) fn stream_websocket_response(
     mut websocket: PumpedWebSocket,
     metadata: CodexWebSocketConnectionMetadata,
@@ -68,6 +70,7 @@ pub(in crate::transport::websocket) fn stream_websocket_response(
     stream_idle_timeout: Option<Duration>,
     trace: TraceContext,
     response_control: Option<ResponseControl>,
+    telemetry: Option<crate::transport::telemetry::SessionTelemetry>,
 ) -> CodexWebSocketStreamingExchange {
     websocket.bind_control(response_control.as_ref());
     let downstream_cancellation = response_control
@@ -105,6 +108,7 @@ pub(in crate::transport::websocket) fn stream_websocket_response(
             },
             rate_limit_updates: rate_limit_updates_for_task,
             response_metadata_updates: response_metadata_updates_for_task,
+            telemetry,
         })
         .await;
     };
@@ -143,6 +147,7 @@ struct WebSocketStreamForwardState {
     rate_limit_updates: CodexWebSocketRateLimitUpdates,
     response_metadata_updates: CodexWebSocketResponseMetadataUpdates,
     delivery: WebSocketStreamDelivery,
+    telemetry: Option<crate::transport::telemetry::SessionTelemetry>,
 }
 
 struct WebSocketStreamDelivery {
@@ -196,6 +201,7 @@ async fn forward_websocket_response_stream(state: WebSocketStreamForwardState) {
         rate_limit_updates,
         response_metadata_updates,
         delivery,
+        telemetry,
     } = state;
     let trace = &delivery.trace;
     let mut pool_return = pool_return;
@@ -217,6 +223,7 @@ async fn forward_websocket_response_stream(state: WebSocketStreamForwardState) {
             message = next_websocket_message(
                 &mut websocket,
                 stream_idle_timeout.filter(|timeout| !timeout.is_zero()).unwrap_or(super::super::pool::DEFAULT_STREAM_IDLE_TIMEOUT),
+                telemetry.as_ref(),
             ) => message,
         };
         let message = match message {

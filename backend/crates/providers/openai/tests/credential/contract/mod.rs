@@ -1344,38 +1344,61 @@ fn credential_expired_failure_marks_unified_account_expired() {
 }
 
 #[test]
-fn credential_expired_failure_keeps_expired_oauth_for_bounded_refresh_recovery() {
-    let store = Arc::new(MemoryAccountStore::default());
-    let mut expired_profile = profile("chatgpt-acct_primary");
-    expired_profile.access_token_expires_at =
-        Some(chrono::Utc::now() - chrono::Duration::minutes(1));
-    block_on(store.seed_oauth_credential(ImportCodexOAuthCredential {
-        account_id: "acct_primary".to_owned(),
-        name: "acct_primary".to_owned(),
-        secret: secret("at-primary"),
-        verified_account: expired_profile,
-        next_refresh_at: Some(chrono::Utc::now() + chrono::Duration::minutes(10)),
-        enabled: true,
-    }));
-    let account = store.account("acct_primary").expect("account");
-    let selector = selector(&store, Arc::new(TestLeaseCoordinator::default()));
+fn credential_expired_failure_selects_protocol_login_or_bounded_token_recovery() {
+    for protocol_login in [false, true] {
+        let store = Arc::new(MemoryAccountStore::default());
+        let mut expired_profile = profile("chatgpt-acct_primary");
+        expired_profile.access_token_expires_at =
+            Some(chrono::Utc::now() - chrono::Duration::minutes(1));
+        let mut prepared = provider_openai::credential::CodexCredentialAdmin
+            .prepare_import(ImportCodexOAuthCredential {
+                account_id: "acct_primary".to_owned(),
+                name: "acct_primary".to_owned(),
+                secret: secret("at-primary"),
+                verified_account: expired_profile,
+                next_refresh_at: Some(chrono::Utc::now() + chrono::Duration::minutes(10)),
+                enabled: true,
+            })
+            .unwrap();
+        if protocol_login {
+            let mut data = CodexCredentialCodec::decode_complete(&prepared.credential).unwrap();
+            data.oauth_mut().unwrap().protocol_login = Some(Box::new(
+                provider_openai::credential::CodexProtocolLoginCredentials {
+                    username: "fixture@example.invalid".to_owned(),
+                    password: "synthetic-password".to_owned(),
+                    totp_secret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ".to_owned(),
+                },
+            ));
+            prepared.credential = CodexCredentialCodec::encode_complete(data).unwrap();
+        }
+        block_on(store.create_account(prepared)).unwrap();
+        let account = store.account("acct_primary").expect("account");
+        let selector = selector(&store, Arc::new(TestLeaseCoordinator::default()));
 
-    block_on(selector.record_failure(
-        &account,
-        CodexAccountFailure::CredentialExpired,
-        Some("token_expired".to_owned()),
-    ))
-    .expect("record credential expiry");
+        block_on(selector.record_failure(
+            &account,
+            CodexAccountFailure::CredentialExpired,
+            Some("token_expired".to_owned()),
+        ))
+        .expect("record credential expiry");
 
-    let retained = store
-        .account("acct_primary")
-        .expect("account retained for refresh");
-    assert_eq!(retained.credential_state(), CredentialState::Ready);
-    assert_eq!(
-        retained.last_error_reason(),
-        Some(AccountErrorReason::AccessTokenExpired)
-    );
-    assert_eq!(retained.last_error_message(), Some("token_expired"));
+        let retained = store
+            .account("acct_primary")
+            .expect("account retained for refresh");
+        assert_eq!(
+            retained.credential_state(),
+            if protocol_login {
+                CredentialState::Expired
+            } else {
+                CredentialState::Ready
+            }
+        );
+        assert_eq!(
+            retained.last_error_reason(),
+            Some(AccountErrorReason::AccessTokenExpired)
+        );
+        assert_eq!(retained.last_error_message(), Some("token_expired"));
+    }
 }
 
 #[test]

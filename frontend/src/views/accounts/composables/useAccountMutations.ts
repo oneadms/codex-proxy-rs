@@ -31,7 +31,7 @@ export function useAccountMutations(options: {
   replaceAccount: (account: Account) => Promise<boolean>
 }) {
   const loadAccounts = options.reload
-  const { downloadJson } = useDownload()
+  const { downloadJson, downloadBlob } = useDownload()
   const onboarding = useAccountOnboarding({
     reload: loadAccounts,
     onImportTaskCreated: options.onImportTaskCreated,
@@ -154,7 +154,7 @@ export function useAccountMutations(options: {
     )
   }
 
-  async function handleExportAccounts() {
+  async function handleExportAccounts(format: 'json' | 'protocol_login' = 'json') {
     if (exportingAccounts.value)
       return
     const selected = [...options.selectedIds.value]
@@ -175,10 +175,29 @@ export function useAccountMutations(options: {
           accountIds: selected.join(','),
           confirm: 'export_sensitive_accounts',
         })
-        const fileName = payload.fileName
-        await downloadJson(payload, fileName)
+        let exportedCount = selected.length
+        if (format === 'protocol_login') {
+          const credentials = payload.documents
+            .filter(document => document.provider === 'openai')
+            .flatMap(document => document.document.accounts)
+            .flatMap(account => account.protocolLogin
+              ? [account.protocolLogin]
+              : [])
+          if (credentials.length === 0) {
+            ZNotification.warning({
+              message: t('accounts.protocolLogin.exportEmpty'),
+            })
+            return
+          }
+          const text = credentials.map(value => `${value.username}----${value.password}----${value.totpSecret}`).join('\n')
+          await downloadBlob(new Blob([`${text}\n`], { type: 'text/plain;charset=utf-8' }), payload.fileName.replace(/\.json$/, '-login.txt'))
+          exportedCount = credentials.length
+        }
+        else {
+          await downloadJson(payload, payload.fileName)
+        }
         ZNotification.success({
-          message: t('accounts.actions.exported', { count: selected.length }),
+          message: t('accounts.actions.exported', { count: exportedCount }),
         })
       },
       {

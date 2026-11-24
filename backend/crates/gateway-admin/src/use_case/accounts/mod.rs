@@ -50,8 +50,6 @@ use super::{
     validate_prepared_rotation,
 };
 
-const CONNECTION_TEST_INPUT: &str = "Reply with exactly OK.";
-
 /// 统一账号页消费的服务
 #[async_trait]
 pub trait AccountsService: Send + Sync {
@@ -1217,7 +1215,17 @@ impl AccountsService for DefaultAccountsService {
         let (stored, provider) = self.provider_for_account(target.account_id()).await?;
         let account = stored.account;
         let model = upstream_model.as_str().to_owned();
-        let input_text = prompt.unwrap_or_else(|| CONNECTION_TEST_INPUT.to_owned());
+        let input_text = match prompt {
+            Some(prompt) => prompt,
+            None => {
+                self.settings
+                    .load_runtime_settings()
+                    .await
+                    .map_err(|error| map_store_error(error, "runtime settings"))?
+                    .values
+                    .account_connection_test_prompt
+            }
+        };
         let operation = provider
             .connection_test_operation(&upstream_model, &input_text)
             .await

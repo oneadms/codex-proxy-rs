@@ -48,6 +48,7 @@ pub(super) fn settings_with_margin(refresh_margin_seconds: u64) -> RuntimeSettin
             audit_retention_days: 90,
             account_error_protection: enabled_protection(),
             account_warmup_enabled: false,
+            account_connection_test_prompt: "Reply with exactly OK.".to_owned(),
             account_warmup_cron: "0 8 * * *".to_owned(),
             account_warmup_model: None,
             reset_credit_lead_minutes: 10,
@@ -61,6 +62,30 @@ pub(super) fn settings_with_margin(refresh_margin_seconds: u64) -> RuntimeSettin
 fn runtime_settings_keep_account_rotation_global() {
     let settings = settings_with_margin(3_600);
     assert!(settings.validate().is_ok());
+}
+
+#[tokio::test]
+async fn connection_test_prompt_uses_a_persisted_global_default() {
+    let Some(database) = TestDatabase::create("connection_test_prompt").await else {
+        return;
+    };
+    let repository = PgRuntimeSettingsRepository::new(database.pool.clone());
+    let before = repository.load_runtime_settings().await.unwrap();
+    assert_eq!(
+        before.values.account_connection_test_prompt,
+        "Reply with exactly OK."
+    );
+    let prompt = "  全局测试提示词\n请回复 OK  ";
+    let mut update = settings_with_margin(300);
+    update.values.account_connection_test_prompt = prompt.to_owned();
+    let revision = repository.update_runtime_settings(update).await.unwrap();
+
+    let reopened = PgRuntimeSettingsRepository::new(database.pool.clone());
+    let after = reopened.load_runtime_settings().await.unwrap();
+    assert_eq!(after.values.account_connection_test_prompt, prompt);
+    assert_eq!(after.config_revision, revision);
+    assert!(after.config_revision > before.config_revision);
+    database.close().await;
 }
 
 #[tokio::test]

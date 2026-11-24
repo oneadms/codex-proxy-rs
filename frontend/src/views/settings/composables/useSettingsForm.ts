@@ -73,6 +73,7 @@ export function useSettingsForm() {
       probeModel: '',
     } as ProtectionDraft,
     accountWarmupEnabled: false,
+    accountConnectionTestPrompt: '',
     accountWarmupCron: [] as string[],
     accountWarmupModel: '',
     resetCreditOnLowWeeklyQuota: false,
@@ -166,6 +167,7 @@ export function useSettingsForm() {
       probeModel: data.accountErrorProtection.probeModel ?? '',
     }
     form.accountWarmupEnabled = data.accountWarmupEnabled
+    form.accountConnectionTestPrompt = data.accountConnectionTestPrompt
     form.accountWarmupCron = data.accountWarmupCron
       ? data.accountWarmupCron.split(';')
       : []
@@ -302,6 +304,7 @@ export function useSettingsForm() {
           probeModel: trimProtectionText(form.accountErrorProtection.probeModel) || null,
         },
         accountWarmupEnabled: form.accountWarmupEnabled,
+        accountConnectionTestPrompt: form.accountConnectionTestPrompt,
         accountWarmupCron: form.accountWarmupCron.join(';'),
         accountWarmupModel: form.accountWarmupModel.trim() || null,
         resetCreditOnLowWeeklyQuota: form.resetCreditOnLowWeeklyQuota,

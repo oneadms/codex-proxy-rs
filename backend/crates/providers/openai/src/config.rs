@@ -16,6 +16,53 @@ use crate::{
     },
 };
 
+/// Codex 上游遥测设置，analytics 与指标出口分别控制
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct CodexTelemetrySettings {
+    pub enabled: bool,
+    pub analytics_enabled: bool,
+    pub environment: String,
+    pub metrics_exporter: CodexMetricsExporter,
+}
+
+impl Default for CodexTelemetrySettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            analytics_enabled: true,
+            environment: "dev".to_owned(),
+            metrics_exporter: CodexMetricsExporter::Statsig,
+        }
+    }
+}
+
+/// 官方内置指标出口，或显式指定的 OTLP HTTP JSON 收集器
+#[derive(Clone, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum CodexMetricsExporter {
+    None,
+    Statsig,
+    OtlpHttp {
+        endpoint: String,
+        #[serde(default)]
+        headers: std::collections::HashMap<String, String>,
+    },
+}
+
+impl std::fmt::Debug for CodexMetricsExporter {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::None => formatter.write_str("None"),
+            Self::Statsig => formatter.write_str("Statsig"),
+            Self::OtlpHttp { headers, .. } => formatter
+                .debug_struct("OtlpHttp")
+                .field("header_count", &headers.len())
+                .finish_non_exhaustive(),
+        }
+    }
+}
+
 /// 本服务的流式请求默认重试次数
 pub const DEFAULT_STREAM_MAX_RETRIES: u64 = 5;
 /// 防止错误配置产生无界隐藏重放；与官方 Codex 的硬上限一致
@@ -44,6 +91,8 @@ pub struct OpenAiConfig {
     pub residency: Option<String>,
     #[serde(default)]
     pub account_routing_override: Option<String>,
+    #[serde(default)]
+    pub telemetry: CodexTelemetrySettings,
     #[serde(skip)]
     identity_secret_path: PathBuf,
 }
@@ -64,6 +113,7 @@ impl OpenAiConfig {
         self.ws_pool.validate()?;
         self.quota.validate()?;
         self.auth.validate()?;
+        self.telemetry.validate()?;
         self.identity_secret_path = runtime_data_dir.join("identity_hmac_secret");
         Ok(())
     }
@@ -126,8 +176,39 @@ impl Default for OpenAiConfig {
             stream_max_retries: DEFAULT_STREAM_MAX_RETRIES,
             residency: None,
             account_routing_override: None,
+            telemetry: CodexTelemetrySettings::default(),
             identity_secret_path: PathBuf::new(),
         }
+    }
+}
+
+impl CodexTelemetrySettings {
+    fn validate(&self) -> Result<(), OpenAiConfigError> {
+        if let CodexMetricsExporter::OtlpHttp { endpoint, headers } = &self.metrics_exporter {
+            let url = Url::parse(endpoint).map_err(|_| {
+                OpenAiConfigError::InvalidField("openai.telemetry.metrics_exporter")
+            })?;
+            if !matches!(url.scheme(), "http" | "https")
+                || url.host_str().is_none()
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.fragment().is_some()
+            {
+                return Err(OpenAiConfigError::InvalidField(
+                    "openai.telemetry.metrics_exporter",
+                ));
+            }
+            for (name, value) in headers {
+                if reqwest::header::HeaderName::from_bytes(name.as_bytes()).is_err()
+                    || reqwest::header::HeaderValue::from_str(value).is_err()
+                {
+                    return Err(OpenAiConfigError::InvalidField(
+                        "openai.telemetry.metrics_exporter",
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 }
 

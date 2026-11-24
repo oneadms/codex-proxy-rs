@@ -50,6 +50,12 @@ export function useSettingsFormRules(form: () => SettingsForm) {
     'usageRetentionDays': integer(1, undefined, t('settings.form.invalidRetention')),
     'minCodexDesktopVersion': version(),
     'minCodexCliVersion': version(),
+    'accountConnectionTestPrompt': {
+      required: true,
+      whitespace: true,
+      trigger: ['blur', 'change'],
+      message: t('settings.connectionTest.promptRequired'),
+    },
     'accountWarmupCron': [
       {
         validator: (_rule, expressions: string[]) => (!form().accountWarmupEnabled || expressions.length > 0)

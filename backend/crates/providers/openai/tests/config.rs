@@ -134,3 +134,24 @@ fn websocket_pool_idle_timeout_rejects_zero() {
 fn valid_config() -> OpenAiConfig {
     OpenAiConfig::default()
 }
+
+#[test]
+fn telemetry_collector_validation_rejects_invalid_urls_and_headers_without_exposing_them() {
+    for exporter in [
+        serde_json::json!({"type": "otlp-http", "endpoint": "ftp://collector.test/metrics"}),
+        serde_json::json!({"type": "otlp-http", "endpoint": "https://user:private@collector.test/metrics"}),
+        serde_json::json!({"type": "otlp-http", "endpoint": "https://collector.test/metrics#fragment"}),
+        serde_json::json!({"type": "otlp-http", "endpoint": "https://collector.test/metrics", "headers": {"x-secret": "private\r\ninjected"}}),
+    ] {
+        let mut config: OpenAiConfig = serde_json::from_value(
+            serde_json::json!({"telemetry": {"metrics_exporter": exporter}}),
+        )
+        .unwrap();
+        assert!(!format!("{config:?}").contains("private"));
+        assert!(
+            config
+                .resolve_and_validate(Path::new("/srv/gateway"))
+                .is_err()
+        );
+    }
+}

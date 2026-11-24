@@ -65,6 +65,12 @@ fn fixed_proxy_login_should_revoke_only_other_sessions_before_authorizing() {
         "reuse-device",
         "change-device",
         "failed-change-device",
+        "auto-relogin",
+        "auto-relogin-id-fallback",
+        "auto-relogin-failed",
+        "auto-relogin-wrong-user",
+        "auto-relogin-no-credentials",
+        "auto-relogin-busy",
     ] {
         let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "admin::protocol_login::fixed_proxy_login_should_revoke_only_other_sessions_before_authorizing", "--nocapture"])
@@ -102,7 +108,7 @@ async fn run_case(case: &str) {
     let acceptor = TlsAcceptor::from(Arc::new(server));
     let state = Arc::new(Mutex::new(State::default()));
     let observed = state.clone();
-    let scenario = if case == "failed-change-device" {
+    let scenario = if matches!(case, "failed-change-device" | "auto-relogin-failed") {
         "revoke-failed"
     } else {
         case
@@ -180,14 +186,194 @@ async fn run_case(case: &str) {
         None
     };
     let browser = Arc::new(browser::FixtureBrowser::default());
-    let bundle = provider_openai::initialize(
+    let ports =
+        super::provider_ports_with(store.clone(), Arc::new(super::TestOAuthPending::default()));
+    let ports = if case.starts_with("auto-relogin") {
+        gateway_core::provider_ports::ProviderStorePorts::new(
+            ports.accounts(),
+            Arc::new(browser::RecoveryLeases {
+                busy: case == "auto-relogin-busy",
+                ..Default::default()
+            }),
+            ports.session_affinity(),
+            ports.session_exclusions(),
+            ports.catalog_cache(),
+            ports.artifact_profiles(),
+            ports.credential_state(),
+            ports.cooldowns(),
+            ports.runtime_policy(),
+            ports.oauth_pending(),
+            ports.diagnostics(),
+        )
+    } else {
+        ports
+    };
+    let mut bundle = provider_openai::initialize(
         config.config.clone(),
-        super::provider_ports_with(store.clone(), Arc::new(super::TestOAuthPending::default())),
+        ports,
         Arc::new(gateway_core::account::UpstreamInfoReader::default()),
         browser.clone(),
     )
     .await
     .unwrap();
+    if case.starts_with("auto-relogin") {
+        let mut profile = crate::support::profile("workspace_fixture");
+        profile.email = Some("fixture@example.invalid".to_owned());
+        profile.chatgpt_user_id = if case == "auto-relogin-wrong-user" {
+            "other_user"
+        } else {
+            "user_fixture"
+        }
+        .to_owned();
+        let mut prepared = CodexCredentialAdmin
+            .prepare_import(ImportCodexOAuthCredential {
+                account_id: "acct_auto_relogin".to_owned(),
+                name: "automatic recovery".to_owned(),
+                secret: crate::support::secret("synthetic-expired"),
+                verified_account: profile,
+                next_refresh_at: None,
+                enabled: true,
+            })
+            .unwrap();
+        prepared.account = prepared
+            .account
+            .with_outbound_proxy(Some(proxy.clone()))
+            .with_request_location(Some(RequestLocation::default()));
+        let mut data = CodexCredentialCodec::decode_complete(&prepared.credential).unwrap();
+        let oauth = data.oauth_mut().unwrap();
+        oauth.protocol_login_device = Some(Box::new(original_device.clone()));
+        if case != "auto-relogin-no-credentials" {
+            oauth.protocol_login = Some(Box::new(
+                provider_openai::credential::CodexProtocolLoginCredentials {
+                    username: "fixture@example.invalid".to_owned(),
+                    password: "synthetic-password".to_owned(),
+                    totp_secret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ".to_owned(),
+                },
+            ));
+        }
+        prepared.credential = CodexCredentialCodec::encode_complete(data).unwrap();
+        let original = prepared.credential.clone();
+        store.create_account(prepared).await.unwrap();
+        let before = store.account("acct_auto_relogin").unwrap();
+        store
+            .apply_state_change(gateway_core::account::AccountStateChange {
+                account_id: before.id().clone(),
+                expected_revision: before.revision(),
+                credential_state: gateway_core::account::CredentialState::Expired,
+                observed_at: std::time::SystemTime::now(),
+                error_reason: Some(gateway_core::account::AccountErrorReason::AccessTokenExpired),
+                message: None,
+            })
+            .await
+            .unwrap();
+        let registration = bundle
+            .take_worker_contributions()
+            .into_iter()
+            .find_map(|item| match item {
+                gateway_core::task::WorkerContribution::Registration(registration)
+                    if registration.id.owner() == "openai-protocol-login" =>
+                {
+                    Some(registration)
+                }
+                _ => None,
+            })
+            .unwrap();
+        let gateway_core::task::WorkerRunnable::Scheduled { task, .. } = registration.runnable
+        else {
+            panic!("scheduled recovery")
+        };
+        let context = gateway_core::task::WorkerCycleContext::new(
+            registration.id,
+            None,
+            gateway_core::lifecycle::CancellationToken::new(),
+        );
+        let (first, second) = tokio::join!(
+            task.run_cycle(context.clone()),
+            task.run_cycle(context.clone())
+        );
+        first.unwrap();
+        second.unwrap();
+        task.run_cycle(context).await.unwrap();
+        let current = store.load_current_credential(before.id()).await.unwrap();
+        if matches!(case, "auto-relogin" | "auto-relogin-id-fallback") {
+            assert_eq!(
+                current.account.credential_state(),
+                gateway_core::account::CredentialState::Ready
+            );
+            assert!(current.account.revision() > before.revision());
+            let data = CodexCredentialCodec::decode_complete(&current.credential).unwrap();
+            let oauth = data.oauth().unwrap();
+            assert_eq!(
+                oauth.refresh_token.as_deref(),
+                Some("synthetic-refresh-token")
+            );
+            assert_eq!(
+                oauth.protocol_login.as_ref().unwrap().password,
+                "synthetic-password"
+            );
+            assert_eq!(
+                oauth.protocol_login_device.as_deref(),
+                Some(&original_device)
+            );
+            let exported = bundle
+                .admin_provider()
+                .export_credentials(vec![
+                    gateway_admin::model::provider_credentials::ProviderExportCredentialInput {
+                        account: super::account_record(&current.account),
+                        provider_material: ProviderDocument::new(OpaqueProviderData::new(
+                            current.credential.expose_to_provider().clone(),
+                        )),
+                    },
+                ])
+                .await
+                .unwrap();
+            assert!(!format!("{exported:?}").contains("synthetic-password"));
+            let document = Value::Object(exported.document.into_provider_data().into_inner());
+            assert_eq!(
+                document["accounts"][0]["protocolLogin"]["password"],
+                "synthetic-password"
+            );
+            let imported = bundle
+                .admin_provider()
+                .prepare_import(PrepareCredentialImport {
+                    default_outbound_proxy: None,
+                    default_request_location: None,
+                    document: ProviderDocument::new(OpaqueProviderData::new(
+                        document.as_object().unwrap().clone(),
+                    )),
+                })
+                .await
+                .unwrap();
+            assert_eq!(
+                imported.credentials[0]
+                    .provider_material
+                    .expose_to_provider()
+                    .expose_to_provider()["protocol_login"]["password"],
+                "synthetic-password"
+            );
+        } else {
+            assert_eq!(current.account.revision(), before.revision());
+            assert_eq!(current.credential, original);
+            assert_eq!(
+                current.account.credential_state(),
+                gateway_core::account::CredentialState::Expired
+            );
+            let expected = if matches!(case, "auto-relogin-failed" | "auto-relogin-wrong-user") {
+                gateway_core::account::AccountErrorReason::CredentialExpired
+            } else {
+                gateway_core::account::AccountErrorReason::AccessTokenExpired
+            };
+            assert_eq!(current.account.last_error_reason(), Some(expected));
+        }
+        let expected_sessions = usize::from(!matches!(
+            case,
+            "auto-relogin-no-credentials" | "auto-relogin-busy"
+        ));
+        assert_eq!(browser.devices.lock().unwrap().len(), expected_sessions);
+        assert_eq!(*browser.closed.lock().unwrap(), expected_sessions);
+        worker.abort();
+        return;
+    }
     let document = json!({
         "authentication_kind": "protocol_login", "username": "fixture@example.invalid",
         "password": "synthetic-password", "totpSecret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
@@ -260,6 +446,15 @@ async fn run_case(case: &str) {
         assert_eq!(
             value["protocol_login_device"],
             browser.devices.lock().unwrap()[0]
+        );
+        assert_eq!(
+            value["protocol_login"]["username"],
+            "fixture@example.invalid"
+        );
+        assert_eq!(value["protocol_login"]["password"], "synthetic-password");
+        assert_eq!(
+            value["protocol_login"]["totpSecret"],
+            "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
         );
         if case == "reuse-device" {
             assert_eq!(value["protocol_login_device"], original_device);
@@ -572,7 +767,22 @@ fn respond(case: &str, observed: &Mutex<State>, url: &Url, head: &str, body: &st
             let fields: BTreeMap<_, _> = url::form_urlencoded::parse(body.as_bytes()).collect();
             assert_eq!(fields["code"], "synthetic-code");
             assert!(fields["code_verifier"].len() >= 43);
-            json!({"access_token": token(), "refresh_token": "synthetic-refresh-token", "id_token": token()})
+            let mut id_token = token();
+            if case == "auto-relogin-id-fallback" {
+                let payload = URL_SAFE_NO_PAD
+                    .decode(id_token.split('.').nth(1).unwrap())
+                    .unwrap();
+                let mut claims: Value = serde_json::from_slice(&payload).unwrap();
+                claims["https://api.openai.com/auth"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("chatgpt_user_id");
+                id_token = format!(
+                    "e30.{}.synthetic",
+                    URL_SAFE_NO_PAD.encode(claims.to_string())
+                );
+            }
+            json!({"access_token": token(), "refresh_token": "synthetic-refresh-token", "id_token": id_token})
         }
         path => panic!("unexpected protocol path: {path}"),
     };

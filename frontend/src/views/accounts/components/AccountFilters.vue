@@ -23,6 +23,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   deleteSelected: []
   exportSelected: []
+  exportProtocolLogin: []
   importTasks: []
   create: []
   editSelected: []
@@ -109,7 +110,7 @@ const groupOptions = computed(() => [
         </template>
 
         <template #default="{ close }">
-          <div class="w-32 p-1.5">
+          <div class="w-52 p-1.5">
             <ZMenuItem @click="(close(), emit('editSelected'))">
               <template #icon>
                 <Pencil class="size-3.5 text-z-text-quaternary" />
@@ -127,6 +128,18 @@ const groupOptions = computed(() => [
                 <Download class="size-3.5 text-z-text-quaternary" />
               </template>
               {{ t('accounts.filters.exportSelected', { count: selectedCount }) }}
+            </ZMenuItem>
+            <ZMenuItem
+              :loading="exportingAccounts"
+              :disabled="Boolean(exportDisabledReason)"
+              :title="exportDisabledReason || undefined"
+              :aria-description="exportDisabledReason || undefined"
+              @click="(close(), emit('exportProtocolLogin'))"
+            >
+              <template #icon>
+                <Download class="size-3.5 text-z-text-quaternary" />
+              </template>
+              {{ t('accounts.protocolLogin.export') }}
             </ZMenuItem>
             <ZMenuItem
               type="danger"

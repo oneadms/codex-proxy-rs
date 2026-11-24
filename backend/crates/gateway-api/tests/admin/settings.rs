@@ -71,6 +71,7 @@ fn update_body() -> Value {
         "auditRetentionDays": 91,
         "accountErrorProtection": gateway_core::account::AccountErrorProtection::default(),
         "accountWarmupEnabled": false,
+        "accountConnectionTestPrompt": "Reply with exactly OK.",
         "accountWarmupCron": "0 8 * * *",
         "accountWarmupModel": null,
         "resetCreditLeadMinutes": 10,
@@ -419,6 +420,46 @@ async fn request_retention_round_trips_and_invalid_days_do_not_replace_it() {
         response_json(response).await["data"]["usageRetentionDays"],
         u32::MAX
     );
+}
+
+#[tokio::test]
+async fn connection_test_prompt_round_trips_and_blank_updates_preserve_it() {
+    let fixture = AdminTestFixture::new().await;
+    fixture.auth.insert_session("valid-session");
+    let prompt = "  全局测试提示词\n请回复 OK  ";
+    let mut body = update_body();
+    body["accountConnectionTestPrompt"] = json!(prompt);
+    let response = app(fixture.state())
+        .oneshot(request(
+            Method::POST,
+            "/api/admin/settings/update",
+            Some(body.clone()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let saved = response_json(response).await;
+    assert_eq!(saved["data"]["accountConnectionTestPrompt"], prompt);
+    body["configRevision"] = saved["data"]["configRevision"].clone();
+
+    for blank in ["", " \t\n\r", "\u{3000}"] {
+        body["accountConnectionTestPrompt"] = json!(blank);
+        let response = app(fixture.state())
+            .oneshot(request(
+                Method::POST,
+                "/api/admin/settings/update",
+                Some(body.clone()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+    let response = app(fixture.state())
+        .oneshot(request(Method::GET, "/api/admin/settings", None))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response_json(response).await, saved);
 }
 
 #[test]

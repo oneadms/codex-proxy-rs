@@ -1440,6 +1440,7 @@ impl SettingsStore for FixtureSettingsStore {
                 audit_retention_days: 30,
                 account_error_protection: gateway_core::account::AccountErrorProtection::default(),
                 account_warmup_enabled: false,
+                account_connection_test_prompt: "Reply with exactly OK.".to_owned(),
                 account_warmup_cron: "0 8 * * *".to_owned(),
                 account_warmup_model: None,
                 reset_credit_lead_minutes: 10,
