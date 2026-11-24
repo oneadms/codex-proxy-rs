@@ -2,15 +2,12 @@
 
 use std::{
     net::{Ipv4Addr, SocketAddr, TcpListener},
-    sync::atomic::{AtomicU32, Ordering},
     time::Duration,
 };
 
 use serde_json::{Value, json};
 
 use super::{MihomoError, MihomoRuntimeNode};
-
-static NEXT_CONTROL_PORT: AtomicU32 = AtomicU32::new(0);
 
 pub(super) struct Controller {
     address: SocketAddr,
@@ -21,8 +18,10 @@ pub(super) struct Controller {
 impl Controller {
     pub(super) fn new(nodes: &[MihomoRuntimeNode]) -> Result<Self, MihomoError> {
         // 避开持久节点的 20000–39999 端口池，后续新增节点也不会占用控制入口
+        // 各进程随机选择探测起点，避免在子进程接管监听前同时选中同一端口
+        let start = (uuid::Uuid::new_v4().as_u128() % 25_536) as u32;
         let socket = (0..25_536)
-            .map(|_| 40_000 + (NEXT_CONTROL_PORT.fetch_add(1, Ordering::Relaxed) % 25_536) as u16)
+            .map(|offset| 40_000 + ((start + offset) % 25_536) as u16)
             .filter(|port| !nodes.iter().any(|node| node.port == *port))
             .find_map(|port| TcpListener::bind((Ipv4Addr::LOCALHOST, port)).ok())
             .ok_or_else(|| MihomoError::unavailable("无法分配 Mihomo 本机控制端口"))?;

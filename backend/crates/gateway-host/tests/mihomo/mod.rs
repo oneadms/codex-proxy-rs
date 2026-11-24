@@ -161,6 +161,39 @@ async fn apply_uses_per_node_loopback_listeners_and_shutdown_reaps_process() {
 }
 
 #[tokio::test]
+async fn independent_processes_start_their_own_mihomo_listeners() {
+    let executable = std::env::current_exe().unwrap();
+    // nextest 将用例放在独立进程中，进程内计数器不能隔离控制端口
+    let outputs = futures::future::join_all((0..8).map(|_| {
+        let mut command = tokio::process::Command::new(&executable);
+        command
+            .args([
+                "--exact",
+                "mihomo::apply_uses_per_node_loopback_listeners_and_shutdown_reaps_process",
+                "--nocapture",
+            ])
+            .kill_on_drop(true);
+        #[cfg(windows)]
+        command.creation_flags(0x0800_0000);
+        async move {
+            tokio::time::timeout(Duration::from_secs(10), command.output())
+                .await
+                .expect("independent Mihomo process startup completes")
+                .unwrap()
+        }
+    }))
+    .await;
+    for output in outputs {
+        assert!(
+            output.status.success(),
+            "stdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[tokio::test]
 async fn failed_committed_configuration_stops_previous_listener() {
     let directory = tempfile::tempdir().unwrap();
     let runtime = runtime(directory.path());
