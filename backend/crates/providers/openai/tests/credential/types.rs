@@ -1,9 +1,10 @@
 //! 验证 OpenAI 凭据类型的脱敏、Cookie 往返与字段约束
 
 use chrono::Utc;
+use gateway_core::account::PlaintextCredential;
 use provider_openai::credential::{
-    CodexAccountProfile, CodexCookie, CodexCredentialData, CodexCredentialPrincipal,
-    CodexOAuthCredentialData, CodexOAuthSecret,
+    CodexAccountProfile, CodexCookie, CodexCredentialCodec, CodexCredentialData,
+    CodexCredentialPrincipal, CodexOAuthCredentialData, CodexOAuthSecret,
 };
 use secrecy::SecretString;
 
@@ -39,7 +40,11 @@ fn account_profile_debug_redacts_identity_fields() {
 }
 
 #[test]
-fn plaintext_provider_schema_round_trips_dynamic_cookie_data() {
+fn plaintext_provider_schema_round_trips_login_device_and_cookie_data() {
+    let device = serde_json::from_str::<serde_json::Value>(
+        r#"{"id":"00000000-0000-4000-8000-000000000002","config":{"webGl2:parameters":{"37137":18446744073709552000}},"webgl2":true}"#,
+    )
+    .expect("device with a WebGL2 integer larger than u64");
     let data = CodexCredentialData::OAuth(CodexOAuthCredentialData {
         transport: provider_openai::credential::ResponsesTransport::PreferWebsocket,
         schema_version: 1,
@@ -48,7 +53,7 @@ fn plaintext_provider_schema_round_trips_dynamic_cookie_data() {
             poid: Some("poid-private".to_owned()),
         }),
         installation_id: "00000000-0000-4000-8000-000000000001".to_owned(),
-        protocol_login_device: None,
+        protocol_login_device: Some(Box::new(device.clone())),
         protocol_login: Some(Box::new(
             provider_openai::credential::CodexProtocolLoginCredentials {
                 username: "fixture@example.invalid".to_owned(),
@@ -74,6 +79,10 @@ fn plaintext_provider_schema_round_trips_dynamic_cookie_data() {
     let encoded = serde_json::to_value(&data).expect("serialize provider JSON");
     let decoded: CodexCredentialData =
         serde_json::from_value(encoded).expect("deserialize provider JSON");
+    assert_eq!(
+        decoded.oauth().unwrap().protocol_login_device.as_deref(),
+        Some(&device)
+    );
     assert_eq!(decoded.oauth().expect("OAuth data").schema_version, 1);
     assert_eq!(decoded.cookies()[0].name, "oai-did");
     assert!(!format!("{decoded:?}").contains("cookie-private"));
@@ -86,6 +95,22 @@ fn plaintext_provider_schema_round_trips_dynamic_cookie_data() {
     ] {
         assert!(!format!("{decoded:?}").contains(value));
     }
+    let credential = CodexCredentialCodec::encode_complete(decoded).expect("encode credential");
+    let persisted =
+        serde_json::to_vec(credential.expose_to_provider()).expect("store credential JSON");
+    let credential = PlaintextCredential::new(
+        serde_json::from_slice(&persisted).expect("read stored credential JSON"),
+    );
+    let decoded = CodexCredentialCodec::decode_complete(&credential).expect("decode credential");
+    assert_eq!(
+        decoded.oauth().unwrap().protocol_login_device.as_deref(),
+        Some(&device)
+    );
+    let runtime = CodexCredentialCodec::decode(&credential).expect("decode runtime credential");
+    assert_eq!(
+        runtime.installation_id,
+        "00000000-0000-4000-8000-000000000001"
+    );
 }
 
 #[test]

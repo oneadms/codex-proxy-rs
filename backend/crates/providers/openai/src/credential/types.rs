@@ -5,7 +5,7 @@ use std::fmt;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
 use secrecy::{ExposeSecret, SecretString};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 use url::Url;
 
 /// 复用上游会话与账号资料时绑定本地记录和真实 OAuth 身份，正常续期不改变归属
@@ -412,11 +412,24 @@ impl fmt::Debug for CodexOAuthCredentialData {
 }
 
 /// OpenAI Provider 的规范化凭据形态
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize)]
 #[serde(untagged)]
 pub enum CodexCredentialData {
     OAuth(CodexOAuthCredentialData),
     ApiKey(super::api_key::ApiKeyCredentialData),
+}
+
+impl<'de> Deserialize<'de> for CodexCredentialData {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // WebGL2 设备参数可超过 u64，直接按认证字段解析，避免 untagged 的内部缓冲拒绝大整数
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let data = if value.get("api_key").is_some() {
+            serde_json::from_value(value).map(Self::ApiKey)
+        } else {
+            serde_json::from_value(value).map(Self::OAuth)
+        };
+        data.map_err(serde::de::Error::custom)
+    }
 }
 
 impl CodexCredentialData {
