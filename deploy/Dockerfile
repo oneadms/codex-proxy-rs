@@ -129,6 +129,7 @@ ARG TARGETARCH
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     go get github.com/klauspost/compress@v1.18.7 \
+        github.com/insomniacslk/dhcp@v0.0.0-20260719225207-c76316d4aa82 \
         golang.org/x/crypto@v0.58.0 golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0 \
     && go test -race -count=1 ./transport/anytls/session \
     && CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -mod=readonly \
