@@ -36,8 +36,8 @@ async fn one_turn_aggregates_actual_models_and_completed_local_tools_across_samp
         .await
         .unwrap();
     let input = vec![
-        json!({"type":"function_call_output","call_id":"call-exec","output":"{\"duration_ms\":7}"}),
-        json!({"type":"function_call_output","call_id":"call-goal","output":"{\"goal\":{\"status\":\"active\"}}"}),
+        json!({"type":"function_call_output","call_id":"call-exec","output":"{\"is_error\":false,\"duration_ms\":7}"}),
+        json!({"type":"function_call_output","call_id":"call-goal","output":"{\"is_error\":false,\"goal\":{\"status\":\"active\"}}"}),
     ];
     let facts =
         json!({"turn":{"e2e_duration_ms":200,"ttft_ms":40,"ttfm_ms":150,"cost_microusd":12345}});

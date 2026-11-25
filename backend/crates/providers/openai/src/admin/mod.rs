@@ -523,6 +523,7 @@ impl ProviderAdmin for OpenAiAdminProvider {
         {
             let login = crate::credential::prepare_protocol_login(
                 document,
+                crate::credential::ProtocolLoginPurpose::Import,
                 command.default_outbound_proxy.as_ref(),
                 command.default_request_location.as_ref(),
                 Arc::clone(&self.javascript),

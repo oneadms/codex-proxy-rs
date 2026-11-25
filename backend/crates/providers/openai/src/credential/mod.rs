@@ -29,7 +29,7 @@ pub(crate) use affinity::{
 pub(crate) use eligibility::CodexSelectionModel;
 pub(crate) use oauth::oauth_owner_ref;
 pub(crate) use protocol_login::CodexProtocolLoginRecovery;
-pub(crate) use protocol_login::prepare_protocol_login;
+pub(crate) use protocol_login::{ProtocolLoginPurpose, prepare_protocol_login};
 pub(crate) use types::parse_access_token_expiration;
 
 pub(crate) use crate::CODEX_AUTHENTICATION_KIND_API_KEY;

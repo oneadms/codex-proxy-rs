@@ -131,6 +131,7 @@ impl CodexProtocolLoginRecovery {
                 "password": credentials.password,
                 "totpSecret": credentials.totp_secret,
             }),
+            super::ProtocolLoginPurpose::Recovery,
             account.outbound_proxy(),
             account.request_location(),
             Arc::clone(&self.javascript),

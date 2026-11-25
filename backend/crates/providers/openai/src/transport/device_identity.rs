@@ -73,6 +73,7 @@ fn is_device_field(name: &str) -> bool {
             | "x-codex-device-id"
             | "oa-device-id"
             | "oai-device-id"
+            | "oai-did"
             | "machine_id"
             | "machineId"
             | "machineid"

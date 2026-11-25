@@ -512,7 +512,7 @@ Responses 的安装身份通过正文 `client_metadata` 及 turn metadata 发送
 设备标识使用按账号记录 ID 派生的固定 UUID，同一账号跨 Key、安装种子、UA、凭据更新和服务重启保持一致。
 请求顶层、`client_metadata`、`metadata`、turn metadata、`telemetry` 和 `runtime` 容器中的
 `device_id`、`machine_id` 及 camelCase、连字符别名替换为该值，包含 JSON 字符串形式和
-`ws_request_header_*` 副本。`x-device-id`、`x-codex-device-id`、`oa-device-id`、`oai-device-id`、
+`ws_request_header_*` 副本。`oai-did`、`x-device-id`、`x-codex-device-id`、`oa-device-id`、`oai-device-id`、
 `x-machine-id` 和同名设备头也使用该值。未提供设备字段时不额外补造字段，输入消息和工具结果不参与设备身份改写。
 设备 UUID 与用于会话隔离的安装 UUID 分属不同用途，`installationSeed` 不影响设备 UUID
 
@@ -1659,7 +1659,7 @@ JSON 正文中的 `prompt` 原样作为测试输入，省略时使用全局运�
 - OAuth 导入由目标 Provider 完成必要的 token exchange 或身份投影。API Key 导入校验凭据格式与地址，不调用 OAuth 或 ChatGPT 身份接口；可用性由模型目录和连接测试验证
 
 协议登录要求已绑定的代理及其位置和时区，从密码、2FA、登录跳转、会话管理到 Codex 授权与令牌交换使用同一个 Camoufox 浏览器及代理配置。
-登录后读取账号会话列表，保留唯一标记为 `is_current_device` 的会话，逐一退出其他会话并复查列表，确认成功后才请求 Codex 授权。
+手动导入登录后读取账号会话列表，保留唯一标记为 `is_current_device` 的会话，逐一退出其他会话并复查列表，确认成功后才请求 Codex 授权。
 回调 URL 只用于校验地址与 `state`、提取授权码，不实际请求 loopback 地址；授权码通过原代理交换令牌，再按普通 OAuth 导入合同入库并保留节点绑定。
 设备标识、屏幕、硬件及 Canvas 等设备参数随账号凭据保存，UA 跟随已安装的浏览器版本，时区采用节点配置
 
@@ -1667,6 +1667,7 @@ JSON 正文中的 `prompt` 原样作为测试输入，省略时使用全局运�
 保存的账号密码及 2FA 不出现在普通账号查询、任务结果或诊断导出中
 
 模型请求或后台令牌刷新收到认证失败 401 时，已保存协议登录材料的账号退出调度，后台每 30 秒检查并通过绑定节点自动重登
+自动重登复用保存的登录设备，不读取或撤销其他登录会话
 重登成功后更新令牌并恢复账号，当前失败请求仍遵循原有重试与交付规则；重登失败保留错误状态，需通过协议登录重新导入
 
 登录接口通过对应站点执行原生 `fetch`，Sentinel SDK 在同一浏览器中实时加载和执行；浏览器下载、插件更新及 GeoIP 外部查询不在账号登录阶段执行。

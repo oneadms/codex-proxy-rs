@@ -84,7 +84,17 @@ async fn request_consent_controls_analytics_but_keeps_explicit_otlp_metrics() {
             (json!({}), json!(false), false),
             (json!({}), json!(true), true),
             (json!({"analytics_enabled":null}), json!(false), true),
-            (json!({"analytics_enabled":"false"}), json!(true), true),
+            (json!({"analytics_enabled":"false"}), json!(true), false),
+            (json!({"analyticsEnabled":"false"}), json!(true), false),
+            (json!({"analyticsEnabled":"true"}), json!(false), true),
+            (
+                json!({"x-codex-turn-metadata":json!({"analytics_enabled":"false"}).to_string()}),
+                json!(true),
+                false,
+            ),
+            (json!({}), json!("false"), false),
+            (json!({}), json!("true"), true),
+            (json!({"analytics_enabled":"invalid"}), json!(false), true),
         ] {
             let upstream = http_response(&sse(&events_for(&[json!({
                 "id":"ws_consent", "type":"web_search_call", "status":"completed"

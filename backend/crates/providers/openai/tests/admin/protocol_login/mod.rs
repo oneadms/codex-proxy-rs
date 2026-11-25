@@ -108,7 +108,7 @@ async fn run_case(case: &str) {
     let acceptor = TlsAcceptor::from(Arc::new(server));
     let state = Arc::new(Mutex::new(State::default()));
     let observed = state.clone();
-    let scenario = if matches!(case, "failed-change-device" | "auto-relogin-failed") {
+    let scenario = if case == "failed-change-device" {
         "revoke-failed"
     } else {
         case
@@ -371,6 +371,28 @@ async fn run_case(case: &str) {
         ));
         assert_eq!(browser.devices.lock().unwrap().len(), expected_sessions);
         assert_eq!(*browser.closed.lock().unwrap(), expected_sessions);
+        let state = state.lock().unwrap();
+        assert!(state.revoked.is_empty());
+        assert!(
+            !state
+                .paths
+                .iter()
+                .any(|path| path.starts_with("/backend-api/accounts/sessions"))
+        );
+        if case == "auto-relogin-failed" {
+            assert_eq!(
+                state.paths.last().map(String::as_str),
+                Some("/oauth/authorize")
+            );
+            assert_eq!(
+                state
+                    .paths
+                    .iter()
+                    .filter(|path| path.as_str() == "/oauth/authorize")
+                    .count(),
+                1
+            );
+        }
         worker.abort();
         return;
     }
@@ -709,7 +731,18 @@ fn respond(case: &str, observed: &Mutex<State>, url: &Url, head: &str, body: &st
             json!({"revoked_unified_sessions": [id], "revoked_app_sessions": []})
         }
         "/oauth/authorize" => {
-            assert_eq!(state.revoked.len(), 2);
+            assert_eq!(
+                state.revoked.len(),
+                if case.starts_with("auto-relogin") {
+                    0
+                } else {
+                    2
+                }
+            );
+            if case == "auto-relogin-failed" {
+                return "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    .to_owned();
+            }
             let query: BTreeMap<_, _> = url.query_pairs().collect();
             state.oauth_state = query["state"].to_string();
             if matches!(

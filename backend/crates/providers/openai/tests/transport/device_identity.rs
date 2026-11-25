@@ -23,15 +23,15 @@ fn account() -> ProviderAccount {
 }
 
 fn request(websocket: bool) -> CodexResponsesRequest {
-    let turn =
-        json!({"deviceId":"client-device", "machine_id":"client-machine", "turn_id":"client-turn"});
+    let turn = json!({"deviceId":"client-device", "machine_id":"client-machine", "oai-did":"client-device", "turn_id":"client-turn"});
     let payload = ProtocolPayload::json_object("openai", json!({
         "model":"gpt-test", "device_id": {"untrusted":"client-device"},
-        "machineId":"client-machine",
+        "machineId":"client-machine", "oai-did":"client-device",
         "input":[{"role":"user", "content":"business-device", "metadata":{"device_id":"business-device"}}],
         "client_metadata":{
             "device_id":"client-device", "ws_request_header_oa-device-id":"client-device",
-            "telemetry":json!({"device_id":"client-device"}).to_string(),
+            "oai-did":"client-device", "ws_request_header_oai-did":"client-device",
+            "telemetry":json!({"device_id":"client-device", "oai-did":"client-device"}).to_string(),
             "x-codex-turn-metadata":turn.to_string()
         },
         "turnMetadata":turn
@@ -41,6 +41,7 @@ fn request(websocket: bool) -> CodexResponsesRequest {
         ("opaque_request_headers".to_owned(), json!([
             ["X-Device-Id", STANDARD.encode("client-device")],
             ["oa-device-id", STANDARD.encode("client-device")],
+            ["oai-did", STANDARD.encode("client-device")],
             ["machine-id", STANDARD.encode("client-machine")],
             ["x-codex-turn-metadata", STANDARD.encode(turn.to_string())]
         ])),
@@ -127,15 +128,20 @@ async fn account_devices_scope_identity_containers_over_http_and_websocket() {
         assert!(uuid::Uuid::parse_str(id).is_ok());
         assert_ne!(id, "client-device");
         assert_eq!(headers["oa-device-id"], id);
+        assert_eq!(headers["oai-did"], id);
         assert_eq!(headers["machine-id"], id);
         assert_eq!(body["device_id"], id);
         assert_eq!(body["machineId"], id);
+        assert_eq!(body["oai-did"], id);
         let metadata = &body["client_metadata"];
         assert_eq!(metadata["device_id"], id);
         assert_eq!(metadata["ws_request_header_oa-device-id"], id);
+        assert_eq!(metadata["oai-did"], id);
+        assert_eq!(metadata["ws_request_header_oai-did"], id);
         let telemetry: Value =
             serde_json::from_str(metadata["telemetry"].as_str().unwrap()).unwrap();
         assert_eq!(telemetry["device_id"], id);
+        assert_eq!(telemetry["oai-did"], id);
         let header_turn: Value =
             serde_json::from_str(headers["x-codex-turn-metadata"].to_str().unwrap()).unwrap();
         let body_turn: Value =
@@ -143,6 +149,7 @@ async fn account_devices_scope_identity_containers_over_http_and_websocket() {
         for turn in [&header_turn, &body_turn, &body["turnMetadata"]] {
             assert_eq!(turn["deviceId"], id);
             assert_eq!(turn["machine_id"], id);
+            assert_eq!(turn["oai-did"], id);
             assert_eq!(turn["turn_id"], "client-turn");
         }
         assert_eq!(body["input"], request(websocket).body()["input"]);

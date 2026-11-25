@@ -473,7 +473,8 @@ OAuth 与 Responses API Key 账号分别使用 `Chatgpt`、`ApiKey` 认证标签
 启动配置 `openai.telemetry.enabled: false` 关闭全部网关遥测，管理端不能覆盖启动禁用，
 `openai.telemetry.metrics_exporter.type: none` 仅关闭指标。
 `openai.telemetry.analytics_enabled: false` 按官方同意规则同时关闭 analytics 和内置 Statsig，显式配置的 OTLP 收集器仍采样导出。
-本次请求的 `analytics_enabled: false` 或驼峰别名同样关闭该请求的 analytics 与内置 Statsig；请求不能覆盖网关关闭设置。
+本次请求的 `analytics_enabled` 或驼峰别名 `analyticsEnabled` 同样控制该请求的 analytics 与内置 Statsig，接受布尔值以及字符串 `"true"`、`"false"`；请求不能覆盖网关关闭设置。
+该字段是网关扩展，官方客户端不会自动在模型请求中携带本地 analytics 开关；`client_metadata` 中应使用字符串形式。
 自定义收集器使用以下配置，地址须包含完整指标路径；`headers` 仅用于收集器认证，修改后重启应用
 
 ```yaml

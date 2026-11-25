@@ -40,8 +40,14 @@ pub(crate) struct PreparedProtocolLogin {
     pub(crate) credentials: Box<super::types::CodexProtocolLoginCredentials>,
 }
 
+pub(crate) enum ProtocolLoginPurpose {
+    Import,
+    Recovery,
+}
+
 pub(crate) async fn prepare_protocol_login(
     document: Value,
+    purpose: ProtocolLoginPurpose,
     proxy: Option<&OutboundProxy>,
     location: Option<&RequestLocation>,
     javascript: Arc<dyn gateway_admin::ports::javascript::JavaScriptRuntime>,
@@ -68,7 +74,7 @@ pub(crate) async fn prepare_protocol_login(
     };
     tokio::time::timeout(std::time::Duration::from_secs(300), async {
         let client = ProtocolClient::new(proxy, location.timezone, javascript, saved).await?;
-        let result = login(&client, input).await;
+        let result = login(&client, input, purpose).await;
         let device = client.device.clone();
         client.close().await;
         result.map(|tokens| PreparedProtocolLogin {
@@ -155,7 +161,11 @@ async fn saved_device(
     Ok(latest)
 }
 
-async fn login(client: &ProtocolClient, input: LoginInput) -> Result<Value, ProviderAdminError> {
+async fn login(
+    client: &ProtocolClient,
+    input: LoginInput,
+    purpose: ProtocolLoginPurpose,
+) -> Result<Value, ProviderAdminError> {
     client.follow("https://chatgpt.com/").await?;
     client
         .get_json("https://chatgpt.com/api/auth/providers")
@@ -307,9 +317,12 @@ async fn login(client: &ProtocolClient, input: LoginInput) -> Result<Value, Prov
         .chatgpt_account_id
         .as_deref()
         .ok_or_else(|| invalid("登录返回的工作区身份不完整"))?;
-    client
-        .revoke_other_sessions(access_token, account_id)
-        .await?;
+    // 退出其他会话只属于手动导入，后台恢复不能撤销仍在使用的登录会话
+    if matches!(purpose, ProtocolLoginPurpose::Import) {
+        client
+            .revoke_other_sessions(access_token, account_id)
+            .await?;
+    }
     let tokens = authorize(client, account_id).await?;
     let authorized = super::types::parse_chatgpt_jwt_claims(text(&tokens, "idToken")?)
         .map_err(|_| invalid("Codex 授权返回的账号身份不完整"))?;

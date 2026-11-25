@@ -120,12 +120,28 @@ impl Tools {
             if self.completed.put(id.to_owned(), ()).is_some() {
                 continue;
             }
+            // 回传即结束等待；执行成败可能只存在于客户端未序列化的内部状态
+            call.turn
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .tool_completed(id);
             let decoded = item["output"]
                 .as_str()
                 .and_then(|raw| serde_json::from_str::<Value>(raw).ok());
             let result = decoded.as_ref().unwrap_or(&item["output"]);
-            let success = result["is_error"].as_bool() != Some(true)
-                && result.get("error").is_none_or(Value::is_null);
+            let success = if result["is_error"].as_bool() == Some(true)
+                || result["success"].as_bool() == Some(false)
+                || result.get("error").is_some_and(|error| !error.is_null())
+            {
+                Some(false)
+            } else {
+                result["success"]
+                    .as_bool()
+                    .or_else(|| result["is_error"].as_bool().map(|error| !error))
+            };
+            let Some(success) = success else {
+                continue;
+            };
             // 回传时延包含客户端调度和传输，只有明确 duration_ms 才是客户端实测耗时
             let elapsed = number(result, "duration_ms")
                 .unwrap_or_else(|| call.started.elapsed().as_secs_f64() * 1000.);
@@ -136,10 +152,6 @@ impl Tools {
             }
             facts::emit(recorder, "codex.tool.call", 1., &tool_tags);
             facts::emit(recorder, "codex.tool.call.duration_ms", elapsed, &tool_tags);
-            call.turn
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .tool_completed(id);
             let short = call.name.rsplit(['.', ':']).next().unwrap_or(&call.name);
             let short = short.rsplit("__").next().unwrap_or(short);
             match short {

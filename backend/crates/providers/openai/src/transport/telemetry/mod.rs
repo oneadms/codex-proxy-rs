@@ -75,10 +75,11 @@ impl CodexBackendClient {
             return None;
         }
         let metadata = metadata::RequestMetadata::new(body, headers);
+        // client_metadata 使用字符串，同时保留已有布尔元数据的同意语义
         let analytics_enabled = telemetry.settings.analytics_enabled
             && metadata
                 .get("analytics_enabled", "analyticsEnabled")
-                .and_then(Value::as_bool)
+                .and_then(|value| value.as_bool().or_else(|| value.as_str()?.parse().ok()))
                 .unwrap_or(true);
         let metrics = self.response_metrics(telemetry, profile, analytics_enabled);
         // 官方只允许带插件归因的少数事件使用 API Key；这两类宿主工具事件仅走 Codex OAuth
